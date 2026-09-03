@@ -6,13 +6,13 @@ Devdash is a local developer-context registry and resource graph written in Go. 
 
 Early development. The repository currently implements:
 
-- a small CLI dispatcher with `help` and `doctor` commands;
+- a small CLI dispatcher with `help`, `doctor`, and workspace CRUD commands;
 - database-path resolution through `DEVDASH_DB` or `~/.devdash/devdash.db`;
 - SQLite connection setup with required pragmas;
 - embedded Goose migration loading;
 - an initial provider-neutral schema and metadata seed data.
 
-Workspace/resource CRUD, alias resolution, graph operations, and provider integrations are not implemented yet.
+Resource CRUD, alias resolution, graph operations, and provider integrations are not implemented yet.
 
 ## Requirements
 
@@ -51,6 +51,15 @@ Use an isolated database during development:
 DEVDASH_DB="$(mktemp -d)/devdash.db" go run ./cmd/devdash doctor
 ```
 
+Manage workspaces:
+
+```bash
+go run ./cmd/devdash workspace list
+go run ./cmd/devdash workspace add devdash "$PWD"
+go run ./cmd/devdash workspace show devdash
+go run ./cmd/devdash workspace remove devdash
+```
+
 Current command behavior:
 
 | Command | Behavior |
@@ -58,6 +67,10 @@ Current command behavior:
 | `devdash` | Prints the application name. |
 | `devdash help`, `-h`, `--help` | Prints CLI usage. |
 | `devdash doctor` | Opens the database, applies migrations, and reports database, SQLite, and migration status. |
+| `devdash workspace list` | Lists workspaces ordered by name. |
+| `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or the current directory. |
+| `devdash workspace show <name-or-id>` | Shows a workspace, resolving exact ID before exact name. |
+| `devdash workspace remove <name-or-id>` | Removes a workspace, resolving exact ID before exact name. |
 | Any other command | Returns an `unknown command` error and exits non-zero. |
 
 ## Database
@@ -127,19 +140,21 @@ go fmt ./...
 go vet ./...
 staticcheck ./...
 go test ./...
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
 go build ./cmd/devdash
 ```
 
 Use `go mod tidy` only after imports or dependencies change, and review the resulting `go.mod` and `go.sum` changes.
 
-The SQLite migration path has regression coverage; other packages currently have no tests. There are no CI workflows, lint configuration, or coverage requirements. New behavior should include package-level tests using Go's `testing` package; storage tests should use temporary database paths and must not commit SQLite, WAL, or SHM files.
+Tests cover workspace service behavior, SQLite persistence, CLI dispatch, path resolution, and migration execution. Project statement coverage must remain above 80%. Storage tests use temporary database paths and must not commit SQLite, WAL, or SHM files.
 
 ## Roadmap
 
 Near-term work is expected to establish:
 
 1. resource-type and relation-type registries;
-2. workspace and resource CRUD;
+2. resource CRUD;
 3. workspace/resource membership and aliases;
 4. relation traversal;
 5. local Git integration before authenticated remote providers.

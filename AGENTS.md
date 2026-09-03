@@ -4,7 +4,7 @@
 
 Devdash is a Go application for managing developer and project context across local and external resources. Its design centers on a provider-neutral resource graph so Git, GitHub, Jira, Confluence, CI/CD, and future providers can share one model.
 
-Current status: early implementation includes CLI dispatch, `doctor`, database-path resolution, SQLite setup, embedded migrations, and an initial schema. CRUD, graph behavior, integrations, and tests are absent. The build and migrations have known blockers documented in `README.md`.
+Current status: early implementation includes CLI dispatch, `doctor`, workspace CRUD, database-path resolution, SQLite setup, embedded migrations, an initial schema, and package-level tests. Resource CRUD, graph behavior, and provider integrations remain unimplemented.
 
 ## Architecture & Data Flow
 
@@ -34,7 +34,7 @@ Core model invariants:
 - Relations are directed and typed. Store inverse or symmetric semantics on relation types; do not silently create inverse edges.
 - Extend in this order: resource type, relation type, metadata, provider-specific extension table, then core-schema change. Promote frequently queried or constrained metadata into typed tables keyed by `resources.id`.
 
-The implemented flow is `cmd/devdash` → `internal/app` → `internal/config` and `internal/storage/sqlite` → embedded migrations. Domain feature and integration packages remain placeholders; no dependency-injection or concurrency pattern exists yet.
+The implemented flow is `cmd/devdash` → `internal/app` → `internal/workspace` and `internal/platform` → `internal/storage/sqlite` → embedded migrations. Workspace behavior depends on an explicit repository interface; provider integrations remain placeholders.
 
 ## Key Directories
 
@@ -122,9 +122,10 @@ The current revision does not build because several placeholder `doc.go` files a
 
 ## Testing & QA
 
-There are currently no `*_test.go` files, fixtures, mocks, benchmarks, fuzz tests, coverage configuration, or CI checks. No third-party test framework is declared.
+The repository has package-level tests for CLI dispatch, configuration, platform path handling, workspace behavior, SQLite persistence, and migrations. Tests use Go's standard `testing` package; no third-party test framework or CI checks are configured.
 
 - Add tests beside the package under test using Go's `testing` package unless a concrete need justifies another dependency.
+- Every new behavior and bug fix must include tests that fail without the corresponding implementation or fix.
 - Test observable domain behavior and invariants, not implementation plumbing. Cover alias precedence, workspace/resource membership, directed relations, transactions, migration behavior, and provider-failure isolation as those features are implemented.
 - Use temporary databases/directories for storage tests. Never commit `.db`, WAL, or SHM artifacts as fixtures.
 - Run targeted tests while developing, then before completion run:
@@ -134,9 +135,11 @@ go fmt ./...
 go vet ./...
 staticcheck ./...
 go test ./...
+go test ./... -coverprofile=coverage.out
+go tool cover -func=coverage.out
 go build ./cmd/devdash
 ```
 
 - Run `go mod tidy` only when imports or dependencies changed, and review its changes.
-- The repository defines no coverage threshold. Do not treat an empty test suite as meaningful verification; add a regression test for each fixed bug and tests for new observable contracts.
+- Total project statement coverage must remain above 80%. Verify the `total:` result from `go tool cover -func=coverage.out`; package summaries alone are insufficient.
 - If a required tool is unavailable, report that fact rather than claiming the check passed.

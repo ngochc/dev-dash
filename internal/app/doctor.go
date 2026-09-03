@@ -3,12 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/ngochc/dev-dash/internal/config"
 	"github.com/ngochc/dev-dash/internal/storage/sqlite"
 )
 
-func runDoctor(ctx context.Context) error {
+func runDoctor(ctx context.Context, output io.Writer) error {
 	dbPath, err := config.DatabasePath()
 	if err != nil {
 		return err
@@ -20,9 +21,9 @@ func runDoctor(ctx context.Context) error {
 	}
 	defer db.Close()
 
-	fmt.Printf("database   OK  %s\n", dbPath)
-	fmt.Println("sqlite     OK")
-	fmt.Println("migration  OK")
+	fmt.Fprintf(output, "database   OK  %s\n", dbPath)
+	fmt.Fprintln(output, "sqlite     OK")
+	fmt.Fprintln(output, "migration  OK")
 
 	return nil
 }
