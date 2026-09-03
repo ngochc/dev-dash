@@ -1,0 +1,31 @@
+# Local Devdash state
+.dev/
+*.db
+*.db-shm
+*.db-wal
+
+# Go binaries and test artifacts
+/devdash
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Local Go workspace
+go.work
+go.work.sum
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# OS metadata
+.DS_Store
