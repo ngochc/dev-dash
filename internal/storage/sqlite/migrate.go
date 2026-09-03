@@ -10,6 +10,7 @@ import (
 
 func migrate(db *sql.DB) error {
 	goose.SetBaseFS(migrations.FS)
+	goose.SetLogger(goose.NopLogger())
 
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set migration dialect: %w", err)

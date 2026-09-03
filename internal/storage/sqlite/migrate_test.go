@@ -23,8 +23,8 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("query migration version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("migration version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("migration version = %d, want 3", version)
 	}
 
 	var resourceTypes, relationTypes int
@@ -40,5 +40,17 @@ func TestOpenAppliesMigrations(t *testing.T) {
 	}
 	if relationTypes != 1 {
 		t.Errorf("related_to relation type count = %d, want 1", relationTypes)
+	}
+
+	var secretColumns int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM pragma_table_info('secrets')
+		WHERE name IN ('key', 'value', 'description', 'created_at', 'updated_at')
+	`).Scan(&secretColumns); err != nil {
+		t.Fatalf("query secrets schema: %v", err)
+	}
+	if secretColumns != 5 {
+		t.Errorf("secrets column count = %d, want 5", secretColumns)
 	}
 }

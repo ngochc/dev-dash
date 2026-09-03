@@ -11,8 +11,23 @@ import (
 )
 
 func Open(ctx context.Context, path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+
+	databaseFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open database file: %w", err)
+	}
+	if err := databaseFile.Chmod(0o600); err != nil {
+		closeErr := databaseFile.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("secure database file: %w; close database file: %v", err, closeErr)
+		}
+		return nil, fmt.Errorf("secure database file: %w", err)
+	}
+	if err := databaseFile.Close(); err != nil {
+		return nil, fmt.Errorf("close database file: %w", err)
 	}
 
 	db, err := sql.Open("sqlite", path)
