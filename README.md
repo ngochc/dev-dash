@@ -6,13 +6,13 @@ Devdash is a local developer-context registry and resource graph written in Go. 
 
 Early development. The repository currently implements:
 
-- a CLI dispatcher with `help`, `doctor`, `update`, workspace CRUD, registry, resource, and workspace-membership commands;
+- a CLI dispatcher with `help`, `doctor`, `update`, workspace CRUD, registry, resource, workspace-membership, secret, and workspace-configuration commands;
 - database-path resolution through `DEVDASH_DB` or `~/.devdash/devdash.db`;
 - SQLite connection setup with required pragmas;
 - embedded Goose migration loading;
-- an initial provider-neutral schema and metadata seed data.
+- an initial provider-neutral schema and metadata seed data;
 - resource-type and relation-type registry services backed by SQLite;
-- provider-neutral resource CRUD and many-to-many workspace/resource membership.
+- provider-neutral resource CRUD, many-to-many workspace/resource membership, secrets, and namespaced workspace configuration.
 
 Alias resolution, relation-edge operations, and provider integrations are not implemented yet.
 
@@ -99,6 +99,24 @@ go run ./cmd/devdash workspace show devdash
 go run ./cmd/devdash workspace remove devdash
 ```
 
+Configure provider-neutral workspace settings:
+
+```bash
+go run ./cmd/devdash workspace config set devdash github.base_url https://github.example.com
+go run ./cmd/devdash workspace config set devdash github.org acme
+go run ./cmd/devdash workspace config set devdash github.secret secret:github-work
+go run ./cmd/devdash workspace config set devdash jira.base_url https://jira.example.com
+go run ./cmd/devdash workspace config set devdash jira.project DD
+go run ./cmd/devdash workspace config set devdash jira.secret secret:jira-work
+go run ./cmd/devdash workspace config set devdash confluence.base_url https://confluence.example.com
+go run ./cmd/devdash workspace config set devdash confluence.space MQMS
+go run ./cmd/devdash workspace config set devdash confluence.secret secret:confluence-work
+go run ./cmd/devdash workspace config list devdash
+EDITOR="code --wait" go run ./cmd/devdash workspace config edit devdash
+```
+
+Configuration keys are provider-neutral namespaced strings. Initial optional conventions are `github.base_url`, `github.org`, `github.secret`, `jira.base_url`, `jira.project`, `jira.secret`, `confluence.base_url`, `confluence.space`, `confluence.secret`, and `git.default_branch`. Store `secret:<key>` references in workspace configuration; never store raw credentials there.
+
 Manage resource vocabulary, resources, and workspace membership:
 
 ```bash
@@ -123,6 +141,11 @@ Current command behavior:
 | `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or the current directory. |
 | `devdash workspace show <name-or-id>` | Shows a workspace, resolving exact ID before exact name. |
 | `devdash workspace remove <name-or-id>` | Removes a workspace, resolving exact ID before exact name. |
+| `devdash workspace config list <workspace>` | Lists namespaced configuration ordered by namespace and key. |
+| `devdash workspace config get <workspace> <key>` | Prints one raw configuration value. |
+| `devdash workspace config set <workspace> <key> <value>` | Creates or updates one configuration value. |
+| `devdash workspace config unset <workspace> <key>` | Removes one exact configuration key. |
+| `devdash workspace config edit <workspace>` | Edits the complete configuration through `$VISUAL` or `$EDITOR` and replaces it atomically. |
 | `devdash resource-type list`, `show`, `add` | Lists, inspects, or registers stable provider-neutral resource types. |
 | `devdash relation-type list`, `show`, `add` | Lists, inspects, or registers directed or symmetric relation types. |
 | `devdash resource list`, `show`, `add`, `update`, `remove` | Manages provider-neutral logical resources by opaque ID. |
@@ -148,12 +171,12 @@ Migrations are embedded from `internal/storage/migrations/` and applied by Goose
 
 The initial schema models:
 
-- workspaces and many-to-many workspace/resource membership;
+- workspaces, normalized namespaced workspace configuration, and many-to-many workspace/resource membership;
 - integrations and provider-neutral resources;
 - physical resource locations separate from logical identity;
 - workspace-scoped and global aliases;
 - directed, typed resource relations;
-- tags and resource/tag membership.
+- secrets, tags, and resource/tag membership.
 
 ## Architecture
 
@@ -173,8 +196,8 @@ cmd/devdash
 - `internal/config/`: environment and path resolution.
 - `internal/{domain,workspace,resource,alias,graph}/`: provider-neutral model and behavior.
 - `internal/integration/`: provider contracts and adapters such as Git, GitHub, Jira, and Confluence.
-- `internal/platform/`: filesystem, process, Git, and OS boundaries.
-- `internal/storage/sqlite/`: SQLite setup and migration execution.
+- `internal/platform/`: filesystem, editor, process, Git, and OS boundaries.
+- `internal/storage/sqlite/`: SQLite setup and persistence adapters.
 - `internal/storage/migrations/`: embedded schema and seed migrations.
 
 Core design rules:
@@ -182,8 +205,8 @@ Core design rules:
 - A resource is the universal logical identity and may belong to multiple workspaces.
 - Physical paths and worktrees are resource locations, not resource identity.
 - Relations are directed and typed; inverse relation metadata does not automatically create inverse edges.
-- Provider-specific behavior stays in `internal/integration/<provider>`.
-- Store credential references, not tokens or secrets, in integration configuration.
+- Provider-specific behavior stays in `internal/integration/<provider>`; generic workspace configuration treats namespaces and values as opaque data.
+- Store `secret:<key>` credential references, not tokens or secrets, in workspace or integration configuration.
 
 See `AGENTS.md` for detailed repository conventions and model invariants.
 
@@ -203,7 +226,7 @@ go build ./cmd/devdash
 
 Use `go mod tidy` only after imports or dependencies change, and review the resulting `go.mod` and `go.sum` changes.
 
-Tests cover registry and resource services, workspace membership, SQLite persistence, CLI dispatch, path resolution, and migration execution. Project statement coverage must remain above 80%. Storage tests use temporary database paths and must not commit SQLite, WAL, or SHM files.
+Tests cover registry and resource services, workspace membership and configuration, atomic SQLite persistence, editor orchestration, CLI dispatch, path resolution, and migration execution. Project statement coverage must remain above 80%. Storage tests use temporary database paths and must not commit SQLite, WAL, or SHM files.
 
 ## Roadmap
 

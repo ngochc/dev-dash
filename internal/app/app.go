@@ -35,7 +35,7 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 		return updater(ctx, output)
 
 	case "workspace":
-		return runWorkspace(ctx, args[1:], output)
+		return runWorkspace(ctx, args[1:], input, output)
 	case "resource-type":
 		return runResourceType(ctx, args[1:], output)
 
@@ -82,6 +82,11 @@ func printHelp(output io.Writer) {
   devdash workspace add <name> [path]
   devdash workspace show <name-or-id>
   devdash workspace remove <name-or-id>
+  devdash workspace config list <workspace>
+  devdash workspace config get <workspace> <key>
+  devdash workspace config set <workspace> <key> <value>
+  devdash workspace config unset <workspace> <key>
+  devdash workspace config edit <workspace>
   devdash workspace resource list <workspace-name-or-id>
   devdash workspace resource add <workspace-name-or-id> <resource-id> [role]
   devdash workspace resource remove <workspace-name-or-id> <resource-id>

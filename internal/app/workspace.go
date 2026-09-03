@@ -11,9 +11,12 @@ import (
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
-func runWorkspace(ctx context.Context, args []string, output io.Writer) error {
+func runWorkspace(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
 	if len(args) > 0 && args[0] == "resource" {
 		return runWorkspaceResource(ctx, args[1:], output)
+	}
+	if len(args) > 0 && args[0] == "config" {
+		return runWorkspaceConfig(ctx, args[1:], input, output)
 	}
 
 	if err := validateWorkspaceArgs(args); err != nil {
