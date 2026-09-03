@@ -6,7 +6,7 @@ Devdash is a local developer-context registry and resource graph written in Go. 
 
 Early development. The repository currently implements:
 
-- a small CLI dispatcher with `help`, `doctor`, and workspace CRUD commands;
+- a small CLI dispatcher with `help`, `doctor`, `update`, and workspace CRUD commands;
 - database-path resolution through `DEVDASH_DB` or `~/.devdash/devdash.db`;
 - SQLite connection setup with required pragmas;
 - embedded Goose migration loading;
@@ -29,6 +29,26 @@ Choose another destination or pin a release tag by setting installer environment
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | DEVDASH_INSTALL_DIR="$HOME/bin" sh
 curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | DEVDASH_VERSION=v0.1.0 sh
+```
+
+Update the current executable in place:
+
+```bash
+devdash update
+```
+
+The update command always reinstalls the latest checksum-verified GitHub Release over the resolved current executable. It fails if that executable's directory is not writable.
+
+If the update command is unavailable or cannot run, rerun the installer manually:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | sh
+```
+
+For a custom installation directory, repeat the original override so the intended copy is replaced instead of installing to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | DEVDASH_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Development requirements
@@ -84,6 +104,7 @@ Current command behavior:
 | `devdash` | Prints the application name. |
 | `devdash help`, `-h`, `--help` | Prints CLI usage. |
 | `devdash doctor` | Opens the database, applies migrations, and reports database, SQLite, and migration status. |
+| `devdash update` | Reinstalls the latest checksum-verified GitHub Release over the resolved current executable. |
 | `devdash workspace list` | Lists workspaces ordered by name. |
 | `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or the current directory. |
 | `devdash workspace show <name-or-id>` | Shows a workspace, resolving exact ID before exact name. |

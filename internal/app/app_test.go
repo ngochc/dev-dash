@@ -3,6 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +24,7 @@ func TestRunTopLevelCommands(t *testing.T) {
 		wantError  string
 	}{
 		{name: "root", wantOutput: "devdash\n"},
-		{name: "help", args: []string{"help"}, wantOutput: "devdash workspace list"},
+		{name: "help", args: []string{"help"}, wantOutput: "devdash update"},
 		{name: "short help", args: []string{"-h"}, wantOutput: "Usage:"},
 		{name: "long help", args: []string{"--help"}, wantOutput: "Usage:"},
 		{name: "doctor", args: []string{"doctor"}, wantOutput: "migration  OK"},
@@ -45,6 +48,51 @@ func TestRunTopLevelCommands(t *testing.T) {
 				t.Errorf("run() output = %q, want containing %q", output.String(), test.wantOutput)
 			}
 		})
+	}
+}
+func TestRunUpdate(t *testing.T) {
+	ctx := context.Background()
+	var output bytes.Buffer
+	wantErr := errors.New("update failed")
+	calls := 0
+
+	updater := func(gotCtx context.Context, gotOutput io.Writer) error {
+		calls++
+		if gotCtx != ctx {
+			t.Errorf("update context differs from run context")
+		}
+		if gotOutput != &output {
+			t.Errorf("update output = %v, want run output", gotOutput)
+		}
+		fmt.Fprint(gotOutput, "updater output")
+		return wantErr
+	}
+
+	err := runWithUpdater(ctx, []string{"update"}, &output, updater)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("runWithUpdater() error = %v, want %v", err, wantErr)
+	}
+	if calls != 1 {
+		t.Errorf("update calls = %d, want 1", calls)
+	}
+	if got := output.String(); got != "updater output" {
+		t.Errorf("runWithUpdater() output = %q, want updater output", got)
+	}
+}
+
+func TestRunUpdateRejectsArguments(t *testing.T) {
+	calls := 0
+	updater := func(context.Context, io.Writer) error {
+		calls++
+		return nil
+	}
+
+	err := runWithUpdater(context.Background(), []string{"update", "--help"}, io.Discard, updater)
+	if err == nil || err.Error() != "usage: devdash update" {
+		t.Fatalf("runWithUpdater() error = %v, want usage error", err)
+	}
+	if calls != 0 {
+		t.Errorf("update calls = %d, want 0", calls)
 	}
 }
 
