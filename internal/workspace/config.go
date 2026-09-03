@@ -9,7 +9,7 @@ import (
 
 var (
 	ErrInvalidConfigKey = errors.New("invalid workspace config key")
-	namespacePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+	namespacePattern    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
 	configKeyPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 

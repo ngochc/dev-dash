@@ -233,6 +233,47 @@ func TestWorkspaceConfigRepositoryReplaceAllRollsBack(t *testing.T) {
 	}
 }
 
+func TestWorkspaceConfigRepositoryReplaceUserPreservesInternal(t *testing.T) {
+	ctx := context.Background()
+	db := openWorkspaceConfigTestDB(t)
+	repository := NewWorkspaceConfigRepository(db)
+	createWorkspaceConfigTestWorkspace(t, db, "workspace-1", "devdash")
+	for _, entry := range []workspace.ConfigEntry{
+		{Namespace: "_repo", Key: "last_refresh", Value: "internal"},
+		{Namespace: "github", Key: "org", Value: "old"},
+	} {
+		if err := repository.Set(ctx, "workspace-1", entry); err != nil {
+			t.Fatalf("Set(%s) error = %v", entry.FullKey(), err)
+		}
+	}
+
+	if err := repository.ReplaceUser(ctx, "workspace-1", []workspace.ConfigEntry{{Namespace: "github", Key: "org", Value: "new"}}); err != nil {
+		t.Fatalf("ReplaceUser() error = %v", err)
+	}
+	entries, err := repository.List(ctx, "workspace-1")
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	want := []workspace.ConfigEntry{
+		{Namespace: "_repo", Key: "last_refresh", Value: "internal"},
+		{Namespace: "github", Key: "org", Value: "new"},
+	}
+	if !reflect.DeepEqual(entries, want) {
+		t.Errorf("List() after user replacement = %#v, want %#v", entries, want)
+	}
+
+	if err := repository.ReplaceUser(ctx, "workspace-1", nil); err != nil {
+		t.Fatalf("empty ReplaceUser() error = %v", err)
+	}
+	entries, err = repository.List(ctx, "workspace-1")
+	if err != nil {
+		t.Fatalf("List() after empty user replacement error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].FullKey() != "_repo.last_refresh" {
+		t.Errorf("List() after empty user replacement = %#v, want internal entry", entries)
+	}
+}
+
 func TestWorkspaceConfigRepositoryWorkspaceDeleteCascades(t *testing.T) {
 	ctx := context.Background()
 	db := openWorkspaceConfigTestDB(t)

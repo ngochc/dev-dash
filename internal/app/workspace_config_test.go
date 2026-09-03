@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ngochc/dev-dash/internal/storage/sqlite"
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
@@ -209,6 +210,68 @@ func TestRunWorkspaceConfigEditFailurePreservesRows(t *testing.T) {
 				t.Errorf("value after failed edit = %q, want old value", got)
 			}
 		})
+	}
+}
+
+func TestRunWorkspaceConfigReservedKeysAndEditPreservation(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "devdash.db")
+	t.Setenv("DEVDASH_DB", databasePath)
+	ctx := context.Background()
+	runAppCommand(t, ctx, "workspace", "add", "devdash", t.TempDir())
+	runAppCommand(t, ctx, "workspace", "config", "set", "devdash", "github.org", "old")
+
+	for _, command := range []string{"set", "unset"} {
+		args := []string{"workspace", "config", command, "devdash", "_repo.test"}
+		if command == "set" {
+			args = append(args, "value")
+		}
+		_, err := runAppCommandError(ctx, args...)
+		if err == nil || err.Error() != `config key "_repo.test" is reserved for internal use` {
+			t.Fatalf("%s reserved key error = %v", command, err)
+		}
+	}
+
+	show := runAppCommand(t, ctx, "workspace", "show", "devdash")
+	workspaceID := strings.TrimSpace(strings.TrimPrefix(strings.Split(show, "\n")[0], "ID:"))
+	db, err := sqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := sqlite.NewWorkspaceConfigRepository(db).Set(ctx, workspaceID, workspace.ConfigEntry{Namespace: "_repo", Key: "last_refresh", Value: "internal"}); err != nil {
+		db.Close()
+		t.Fatalf("set internal config: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+
+	if got := runAppCommand(t, ctx, "workspace", "config", "list", "devdash"); got != "github.org   old\n" {
+		t.Errorf("user config list = %q, want internal key hidden", got)
+	}
+	var output bytes.Buffer
+	editor := func(_ context.Context, initial []byte, _ io.Reader, _ io.Writer) ([]byte, error) {
+		if got := string(initial); got != "github.org=old\n" {
+			t.Errorf("editor initial config = %q, want only user config", got)
+		}
+		return []byte("github.org=new\n"), nil
+	}
+	if err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, strings.NewReader(""), &output, editor); err != nil {
+		t.Fatalf("edit config: %v", err)
+	}
+
+	db, err = sqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatalf("reopen database: %v", err)
+	}
+	defer db.Close()
+	repository := sqlite.NewWorkspaceConfigRepository(db)
+	internal, err := repository.Get(ctx, workspaceID, "_repo", "last_refresh")
+	if err != nil || internal.Value != "internal" {
+		t.Errorf("internal config after edit = %#v, %v", internal, err)
+	}
+	user, err := repository.Get(ctx, workspaceID, "github", "org")
+	if err != nil || user.Value != "new" {
+		t.Errorf("user config after edit = %#v, %v", user, err)
 	}
 }
 

@@ -33,6 +33,10 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 			return fmt.Errorf("usage: devdash update")
 		}
 		return updater(ctx, output)
+	case "config":
+		return runConfig(args[1:], output)
+	case "repo":
+		return runRepo(ctx, args[1:], output)
 
 	case "workspace":
 		return runWorkspace(ctx, args[1:], input, output)
@@ -62,6 +66,11 @@ func printHelp(output io.Writer) {
   devdash
   devdash doctor
   devdash update
+  devdash config keys [provider]
+  devdash repo refresh <workspace>
+  devdash repo list <workspace>
+  devdash repo clone <workspace> --all
+  devdash repo clone <workspace> <repo> [<repo>...]
   devdash secret set <key>
   devdash secret get <key>
   devdash secret show <key>

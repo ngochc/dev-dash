@@ -21,10 +21,21 @@ func NewConfigService(workspaceRepository Repository, configRepository ConfigRep
 	}
 }
 
-func (s *ConfigService) Set(ctx context.Context, workspaceIdentifier, fullKey, value string) (Workspace, error) {
+func (s *ConfigService) SetUser(ctx context.Context, workspaceIdentifier, fullKey, value string) (Workspace, error) {
+	return s.set(ctx, workspaceIdentifier, fullKey, value, true)
+}
+
+func (s *ConfigService) SetInternal(ctx context.Context, workspaceIdentifier, fullKey, value string) (Workspace, error) {
+	return s.set(ctx, workspaceIdentifier, fullKey, value, false)
+}
+
+func (s *ConfigService) set(ctx context.Context, workspaceIdentifier, fullKey, value string, user bool) (Workspace, error) {
 	namespace, key, err := ParseConfigKey(fullKey)
 	if err != nil {
 		return Workspace{}, err
+	}
+	if user && strings.HasPrefix(namespace, "_") {
+		return Workspace{}, fmt.Errorf("config key %q is reserved for internal use", fullKey)
 	}
 	value, err = normalizeConfigValue(value)
 	if err != nil {
@@ -63,7 +74,25 @@ func (s *ConfigService) Get(ctx context.Context, workspaceIdentifier, fullKey st
 	return item, entry, nil
 }
 
-func (s *ConfigService) List(ctx context.Context, workspaceIdentifier string) (Workspace, []ConfigEntry, error) {
+func (s *ConfigService) ListUser(ctx context.Context, workspaceIdentifier string) (Workspace, []ConfigEntry, error) {
+	item, entries, err := s.list(ctx, workspaceIdentifier)
+	if err != nil {
+		return Workspace{}, nil, err
+	}
+	userEntries := make([]ConfigEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Namespace, "_") {
+			userEntries = append(userEntries, entry)
+		}
+	}
+	return item, userEntries[:len(userEntries):len(userEntries)], nil
+}
+
+func (s *ConfigService) ListAll(ctx context.Context, workspaceIdentifier string) (Workspace, []ConfigEntry, error) {
+	return s.list(ctx, workspaceIdentifier)
+}
+
+func (s *ConfigService) list(ctx context.Context, workspaceIdentifier string) (Workspace, []ConfigEntry, error) {
 	item, err := s.resolveWorkspace(ctx, workspaceIdentifier)
 	if err != nil {
 		return Workspace{}, nil, err
@@ -76,10 +105,13 @@ func (s *ConfigService) List(ctx context.Context, workspaceIdentifier string) (W
 	return item, entries, nil
 }
 
-func (s *ConfigService) Unset(ctx context.Context, workspaceIdentifier, fullKey string) (Workspace, error) {
+func (s *ConfigService) UnsetUser(ctx context.Context, workspaceIdentifier, fullKey string) (Workspace, error) {
 	namespace, key, err := ParseConfigKey(fullKey)
 	if err != nil {
 		return Workspace{}, err
+	}
+	if strings.HasPrefix(namespace, "_") {
+		return Workspace{}, fmt.Errorf("config key %q is reserved for internal use", fullKey)
 	}
 	item, err := s.resolveWorkspace(ctx, workspaceIdentifier)
 	if err != nil {
@@ -97,7 +129,7 @@ func (s *ConfigService) Unset(ctx context.Context, workspaceIdentifier, fullKey 
 	return item, nil
 }
 
-func (s *ConfigService) ReplaceAll(ctx context.Context, workspaceIdentifier string, entries []ConfigEntry) (Workspace, error) {
+func (s *ConfigService) ReplaceUser(ctx context.Context, workspaceIdentifier string, entries []ConfigEntry) (Workspace, error) {
 	normalized := make([]ConfigEntry, len(entries))
 	seen := make(map[string]struct{}, len(entries))
 	for i, entry := range entries {
@@ -105,11 +137,14 @@ func (s *ConfigService) ReplaceAll(ctx context.Context, workspaceIdentifier stri
 		if err != nil {
 			return Workspace{}, err
 		}
+		fullKey := namespace + "." + key
+		if strings.HasPrefix(namespace, "_") {
+			return Workspace{}, fmt.Errorf("config key %q is reserved for internal use", fullKey)
+		}
 		value, err := normalizeConfigValue(entry.Value)
 		if err != nil {
 			return Workspace{}, err
 		}
-		fullKey := namespace + "." + key
 		if _, exists := seen[fullKey]; exists {
 			return Workspace{}, fmt.Errorf("duplicate workspace config %q", fullKey)
 		}
@@ -122,7 +157,7 @@ func (s *ConfigService) ReplaceAll(ctx context.Context, workspaceIdentifier stri
 	if err != nil {
 		return Workspace{}, err
 	}
-	if err := s.repository.ReplaceAll(ctx, item.ID, normalized); err != nil {
+	if err := s.repository.ReplaceUser(ctx, item.ID, normalized); err != nil {
 		return Workspace{}, fmt.Errorf("replace workspace config: %w", err)
 	}
 	return item, nil

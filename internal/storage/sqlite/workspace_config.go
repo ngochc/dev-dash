@@ -107,13 +107,21 @@ func (r *WorkspaceConfigRepository) Unset(ctx context.Context, workspaceID, name
 }
 
 func (r *WorkspaceConfigRepository) ReplaceAll(ctx context.Context, workspaceID string, entries []workspace.ConfigEntry) error {
+	return r.replace(ctx, workspaceID, entries, false)
+}
+
+func (r *WorkspaceConfigRepository) ReplaceUser(ctx context.Context, workspaceID string, entries []workspace.ConfigEntry) error {
+	return r.replace(ctx, workspaceID, entries, true)
+}
+
+func (r *WorkspaceConfigRepository) replace(ctx context.Context, workspaceID string, entries []workspace.ConfigEntry, userOnly bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin workspace config replacement: %w", err)
 	}
 	defer tx.Rollback()
 
-	existing, err := listWorkspaceConfigKeys(ctx, tx, workspaceID)
+	existing, err := listWorkspaceConfigKeys(ctx, tx, workspaceID, userOnly)
 	if err != nil {
 		return err
 	}
@@ -161,12 +169,16 @@ type workspaceConfigKey struct {
 	key       string
 }
 
-func listWorkspaceConfigKeys(ctx context.Context, tx *sql.Tx, workspaceID string) (map[workspaceConfigKey]struct{}, error) {
-	rows, err := tx.QueryContext(ctx, `
+func listWorkspaceConfigKeys(ctx context.Context, tx *sql.Tx, workspaceID string, userOnly bool) (map[workspaceConfigKey]struct{}, error) {
+	query := `
 		SELECT namespace, key
 		FROM workspace_config
 		WHERE workspace_id = ?
-	`, workspaceID)
+	`
+	if userOnly {
+		query += ` AND substr(namespace, 1, 1) <> '_'`
+	}
+	rows, err := tx.QueryContext(ctx, query, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("query existing workspace config: %w", err)
 	}

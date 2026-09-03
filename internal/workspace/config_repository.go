@@ -15,4 +15,5 @@ type ConfigRepository interface {
 	ListNamespace(context.Context, string, string) ([]ConfigEntry, error)
 	Unset(context.Context, string, string, string) error
 	ReplaceAll(context.Context, string, []ConfigEntry) error
+	ReplaceUser(context.Context, string, []ConfigEntry) error
 }

@@ -55,7 +55,7 @@ func runWorkspaceConfigWithEditor(
 	)
 	switch args[0] {
 	case "list":
-		_, entries, err := service.List(ctx, args[1])
+		_, entries, err := service.ListUser(ctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -81,21 +81,21 @@ func runWorkspaceConfigWithEditor(
 		return nil
 
 	case "set":
-		if _, err := service.Set(ctx, args[1], args[2], args[3]); err != nil {
+		if _, err := service.SetUser(ctx, args[1], args[2], args[3]); err != nil {
 			return err
 		}
 		fmt.Fprintf(output, "Workspace config updated: %s\n", args[2])
 		return nil
 
 	case "unset":
-		if _, err := service.Unset(ctx, args[1], args[2]); err != nil {
+		if _, err := service.UnsetUser(ctx, args[1], args[2]); err != nil {
 			return err
 		}
 		fmt.Fprintf(output, "Workspace config removed: %s\n", args[2])
 		return nil
 
 	case "edit":
-		item, entries, err := service.List(ctx, args[1])
+		item, entries, err := service.ListUser(ctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -107,7 +107,7 @@ func runWorkspaceConfigWithEditor(
 		if err != nil {
 			return err
 		}
-		if _, err := service.ReplaceAll(ctx, args[1], entries); err != nil {
+		if _, err := service.ReplaceUser(ctx, args[1], entries); err != nil {
 			return err
 		}
 		fmt.Fprintf(output, "Workspace config updated: %s\n", item.Name)
