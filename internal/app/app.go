@@ -36,6 +36,14 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 
 	case "workspace":
 		return runWorkspace(ctx, args[1:], output)
+	case "resource-type":
+		return runResourceType(ctx, args[1:], output)
+
+	case "relation-type":
+		return runRelationType(ctx, args[1:], output)
+
+	case "resource":
+		return runResource(ctx, args[1:], output)
 
 	case "secret":
 		return runSecret(ctx, args[1:], input, output)
@@ -59,9 +67,23 @@ func printHelp(output io.Writer) {
   devdash secret show <key>
   devdash secret list
   devdash secret delete <key>
+  devdash resource-type list
+  devdash resource-type show <name>
+  devdash resource-type add <name> <display-name> [owner] [description]
+  devdash relation-type list
+  devdash relation-type show <name>
+  devdash relation-type add <name> <display-name> <inverse-name-or-> <true|false> [owner] [description]
+  devdash resource list
+  devdash resource show <id>
+  devdash resource add <type> <name> [url]
+  devdash resource update <id> <type> <name> [url]
+  devdash resource remove <id>
   devdash workspace list
   devdash workspace add <name> [path]
   devdash workspace show <name-or-id>
   devdash workspace remove <name-or-id>
+  devdash workspace resource list <workspace-name-or-id>
+  devdash workspace resource add <workspace-name-or-id> <resource-id> [role]
+  devdash workspace resource remove <workspace-name-or-id> <resource-id>
   devdash help`)
 }

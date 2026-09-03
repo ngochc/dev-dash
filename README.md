@@ -6,13 +6,15 @@ Devdash is a local developer-context registry and resource graph written in Go. 
 
 Early development. The repository currently implements:
 
-- a small CLI dispatcher with `help`, `doctor`, `update`, and workspace CRUD commands;
+- a CLI dispatcher with `help`, `doctor`, `update`, workspace CRUD, registry, resource, and workspace-membership commands;
 - database-path resolution through `DEVDASH_DB` or `~/.devdash/devdash.db`;
 - SQLite connection setup with required pragmas;
 - embedded Goose migration loading;
 - an initial provider-neutral schema and metadata seed data.
+- resource-type and relation-type registry services backed by SQLite;
+- provider-neutral resource CRUD and many-to-many workspace/resource membership.
 
-Resource CRUD, alias resolution, graph operations, and provider integrations are not implemented yet.
+Alias resolution, relation-edge operations, and provider integrations are not implemented yet.
 
 ## Install
 
@@ -97,6 +99,18 @@ go run ./cmd/devdash workspace show devdash
 go run ./cmd/devdash workspace remove devdash
 ```
 
+Manage resource vocabulary, resources, and workspace membership:
+
+```bash
+go run ./cmd/devdash resource-type list
+go run ./cmd/devdash resource-type add service_component "Service Component" core
+go run ./cmd/devdash relation-type list
+go run ./cmd/devdash relation-type add supports Supports supported_by false core
+go run ./cmd/devdash resource add service_component api https://example.test/api
+go run ./cmd/devdash workspace resource add devdash <resource-id> primary
+go run ./cmd/devdash workspace resource list devdash
+```
+
 Current command behavior:
 
 | Command | Behavior |
@@ -109,6 +123,10 @@ Current command behavior:
 | `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or the current directory. |
 | `devdash workspace show <name-or-id>` | Shows a workspace, resolving exact ID before exact name. |
 | `devdash workspace remove <name-or-id>` | Removes a workspace, resolving exact ID before exact name. |
+| `devdash resource-type list`, `show`, `add` | Lists, inspects, or registers stable provider-neutral resource types. |
+| `devdash relation-type list`, `show`, `add` | Lists, inspects, or registers directed or symmetric relation types. |
+| `devdash resource list`, `show`, `add`, `update`, `remove` | Manages provider-neutral logical resources by opaque ID. |
+| `devdash workspace resource list`, `add`, `remove` | Manages resource membership without changing resource identity. |
 | Any other command | Returns an `unknown command` error and exits non-zero. |
 
 ## Database
@@ -185,14 +203,12 @@ go build ./cmd/devdash
 
 Use `go mod tidy` only after imports or dependencies change, and review the resulting `go.mod` and `go.sum` changes.
 
-Tests cover workspace service behavior, SQLite persistence, CLI dispatch, path resolution, and migration execution. Project statement coverage must remain above 80%. Storage tests use temporary database paths and must not commit SQLite, WAL, or SHM files.
+Tests cover registry and resource services, workspace membership, SQLite persistence, CLI dispatch, path resolution, and migration execution. Project statement coverage must remain above 80%. Storage tests use temporary database paths and must not commit SQLite, WAL, or SHM files.
 
 ## Roadmap
 
 Near-term work is expected to establish:
 
-1. resource-type and relation-type registries;
-2. resource CRUD;
-3. workspace/resource membership and aliases;
-4. relation traversal;
-5. local Git integration before authenticated remote providers.
+1. workspace-scoped and global alias resolution;
+2. relation-edge CRUD and traversal;
+3. local Git integration before authenticated remote providers.

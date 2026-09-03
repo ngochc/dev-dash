@@ -12,6 +12,10 @@ import (
 )
 
 func runWorkspace(ctx context.Context, args []string, output io.Writer) error {
+	if len(args) > 0 && args[0] == "resource" {
+		return runWorkspaceResource(ctx, args[1:], output)
+	}
+
 	if err := validateWorkspaceArgs(args); err != nil {
 		return err
 	}
