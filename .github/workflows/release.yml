@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Enforce total coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./... -coverprofile=coverage.out
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
+          if [[ -z "$coverage" ]]; then
+            echo "total coverage was not reported" >&2
+            exit 1
+          fi
+          printf 'total coverage: %s%%\n' "$coverage"
+          awk -v coverage="$coverage" 'BEGIN { exit !(coverage > 80.0) }'
+
+      - name: Test installer
+        run: |
+          sh -n install.sh
+          sh -n test/install_test.sh
+          sh test/install_test.sh
+
+      - name: Build release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            IFS=/ read -r goos goarch <<<"$target"
+            build_dir="dist/${goos}_${goarch}"
+            mkdir -p "$build_dir"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "-s -w" -o "$build_dir/devdash" ./cmd/devdash
+            tar -C "$build_dir" -czf "dist/devdash_${goos}_${goarch}.tar.gz" devdash
+          done
+          (
+            cd dist
+            sha256sum devdash_*.tar.gz >checksums.txt
+          )
+
+      - name: Smoke test release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/devdash-release/latest/download"
+          mkdir -p "$fixture"
+          cp dist/devdash_linux_amd64.tar.gz dist/checksums.txt "$fixture/"
+          DEVDASH_RELEASE_BASE_URL="file://$RUNNER_TEMP/devdash-release" \
+            DEVDASH_INSTALL_DIR="$RUNNER_TEMP/devdash-bin" \
+            sh install.sh
+          "$RUNNER_TEMP/devdash-bin/devdash" --help
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/devdash_*.tar.gz
+          dist/checksums.txt
+          --verify-tag
+          --generate-notes

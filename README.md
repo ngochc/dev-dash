@@ -14,7 +14,24 @@ Early development. The repository currently implements:
 
 Resource CRUD, alias resolution, graph operations, and provider integrations are not implemented yet.
 
-## Requirements
+## Install
+
+Install the latest release on macOS or Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | sh
+```
+
+The installer supports amd64 and arm64, verifies the selected GitHub Release archive against the published SHA-256 checksums, and installs `devdash` to `~/.local/bin/devdash` by default. It prints the required `PATH` update when `~/.local/bin` is not already present.
+
+Choose another destination or pin a release tag by setting installer environment variables on `sh`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | DEVDASH_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | DEVDASH_VERSION=v0.1.0 sh
+```
+
+## Development requirements
 
 - Go `1.26.0`
 - `asdf` for the project-managed Go installation

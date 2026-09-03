@@ -52,6 +52,9 @@ The implemented flow is `cmd/devdash` → `internal/app` → `internal/workspace
 | `internal/config/` | Configuration and path resolution. |
 | `internal/storage/sqlite/` | SQLite connection, queries, and migration execution. |
 | `internal/storage/migrations/` | Embedded Goose migrations. Never rewrite an applied migration. |
+| `install.sh` | POSIX shell installer for verified GitHub Release binaries. |
+| `.github/workflows/release.yml` | Builds and publishes platform archives for pushed `v*` tags. |
+| `test/install_test.sh` | Black-box installer behavior and failure-safety tests. |
 
 ## Development Commands
 
@@ -71,12 +74,12 @@ go fmt ./...                 # format source
 go vet ./...                 # standard static checks
 staticcheck ./...            # additional checks; tool is not pinned by this repo
 go test ./...                # run all tests
-go build ./cmd/devdash       # currently blocked; see README.md
-go run ./cmd/devdash         # currently blocked; see README.md
+go build ./cmd/devdash       # build the CLI
+go run ./cmd/devdash         # run the CLI from source
 go mod tidy                  # update module metadata after dependency changes
 ```
 
-The current revision does not build because several placeholder `doc.go` files are empty. After that is corrected, `doctor` remains blocked by invalid migrations. Do not report validation commands as passing unless they ran successfully.
+Do not report validation commands as passing unless they ran successfully.
 
 ## Code Conventions & Common Patterns
 
@@ -109,6 +112,9 @@ The current revision does not build because several placeholder `doc.go` files a
 | `internal/storage/migrations/embed.go` | Embeds migration SQL into the binary. |
 | `Makefile` | Contains three recursive `make` command lines but no target definitions; do not rely on it. |
 | `.gitignore` | Excludes local Devdash/SQLite state, Go build and test artifacts, local workspace files, environment files, and OS metadata. |
+| `install.sh` | Maps supported platforms, verifies release checksums, and installs atomically to a user-owned directory. |
+| `.github/workflows/release.yml` | Enforces tests and coverage, builds release archives, smoke-tests installation, and publishes GitHub Releases. |
+| `test/install_test.sh` | Exercises installer platform selection, version selection, checksum failures, and failure-safe replacement. |
 
 ## Runtime/Tooling Preferences
 
@@ -118,19 +124,23 @@ The current revision does not build because several placeholder `doc.go` files a
 - Migrations: `github.com/pressly/goose/v3`, embedded from `internal/storage/migrations/`; runtime must not depend on loose migration files.
 - Database path precedence: `DEVDASH_DB`, then `$HOME/.devdash/devdash.db`. Create `$HOME/.devdash` when needed; do not substitute OS-specific application-data directories.
 - Every SQLite connection must enable `foreign_keys = ON`, `journal_mode = WAL`, and `busy_timeout = 5000`.
-- No CI, lint configuration, release tooling, container setup, code generation, vendoring, or separate toolchain directive currently exists.
+- GitHub Actions release tooling is defined in `.github/workflows/release.yml`. Pushed `v*` tags build `devdash_darwin_amd64.tar.gz`, `devdash_darwin_arm64.tar.gz`, `devdash_linux_amd64.tar.gz`, and `devdash_linux_arm64.tar.gz`, publish one `checksums.txt`, smoke-test the Linux archive, and create the GitHub Release. Do not publish an archive without its checksum entry.
 
 ## Testing & QA
 
-The repository has package-level tests for CLI dispatch, configuration, platform path handling, workspace behavior, SQLite persistence, and migrations. Tests use Go's standard `testing` package; no third-party test framework or CI checks are configured.
+The repository has package-level tests for CLI dispatch, configuration, platform path handling, workspace behavior, SQLite persistence, and migrations, plus black-box shell tests for the installer. Go tests use the standard `testing` package; the tag-driven release workflow is the configured CI path.
 
 - Add tests beside the package under test using Go's `testing` package unless a concrete need justifies another dependency.
 - Every new behavior and bug fix must include tests that fail without the corresponding implementation or fix.
+- Every installer behavior change must include a corresponding black-box case in `test/install_test.sh`.
 - Test observable domain behavior and invariants, not implementation plumbing. Cover alias precedence, workspace/resource membership, directed relations, transactions, migration behavior, and provider-failure isolation as those features are implemented.
 - Use temporary databases/directories for storage tests. Never commit `.db`, WAL, or SHM artifacts as fixtures.
 - Run targeted tests while developing, then before completion run:
 
 ```bash
+sh -n install.sh
+sh -n test/install_test.sh
+sh test/install_test.sh
 go fmt ./...
 go vet ./...
 staticcheck ./...
