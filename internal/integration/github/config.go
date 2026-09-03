@@ -12,7 +12,7 @@ import (
 const (
 	BaseURLKey      = "github.base_url"
 	OrganizationKey = "github.org"
-	defaultBaseURL  = "https://github.com"
+	DefaultBaseURL  = "https://github.com"
 )
 
 var (
@@ -22,7 +22,7 @@ var (
 	Definitions = []configdef.Definition{
 		{
 			Name:        BaseURLKey,
-			Default:     defaultBaseURL,
+			Default:     DefaultBaseURL,
 			Description: "GitHub or GHES base URL",
 		},
 		{
@@ -40,11 +40,30 @@ type Config struct {
 	Organization string
 }
 
-// ResolveConfig applies defaults and validates GitHub configuration before external work.
-func ResolveConfig(workspaceName string, values map[string]string) (Config, error) {
+// ResolveHostConfig applies the default GitHub host and validates its URL.
+func ResolveHostConfig(values map[string]string) (Config, error) {
 	baseURL := strings.TrimSpace(values["base_url"])
 	if baseURL == "" {
-		baseURL = defaultBaseURL
+		baseURL = DefaultBaseURL
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" {
+		return Config{}, configError{
+			message: fmt.Sprintf("Invalid GitHub configuration:\n  %s = %q\n\nExpected an HTTP or HTTPS URL.", BaseURLKey, baseURL),
+			cause:   ErrInvalidConfig,
+		}
+	}
+	return Config{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		Host:    strings.ToLower(parsed.Hostname()),
+	}, nil
+}
+
+// ResolveConfig applies defaults and validates GitHub configuration before external work.
+func ResolveConfig(workspaceName string, values map[string]string) (Config, error) {
+	config, err := ResolveHostConfig(values)
+	if err != nil {
+		return Config{}, err
 	}
 	organization := strings.TrimSpace(values["org"])
 	if organization == "" {
@@ -53,19 +72,8 @@ func ResolveConfig(workspaceName string, values map[string]string) (Config, erro
 			cause:   ErrIncompleteConfig,
 		}
 	}
-
-	parsed, err := url.Parse(baseURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return Config{}, configError{
-			message: fmt.Sprintf("Invalid GitHub configuration:\n  %s = %q\n\nExpected an HTTP or HTTPS URL.", BaseURLKey, baseURL),
-			cause:   ErrInvalidConfig,
-		}
-	}
-	return Config{
-		BaseURL:      strings.TrimRight(baseURL, "/"),
-		Host:         strings.ToLower(parsed.Hostname()),
-		Organization: organization,
-	}, nil
+	config.Organization = organization
+	return config, nil
 }
 
 type configError struct {

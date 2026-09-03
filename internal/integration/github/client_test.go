@@ -75,6 +75,108 @@ func TestClientDiscoverRepositories(t *testing.T) {
 	}
 }
 
+func TestClientDiscoverOwners(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{
+		{stdout: `{"login":"personal"}`},
+		{stdout: `[{"login":"zeta"},{"login":"alpha"}]
+[{"login":"PERSONAL"},{"login":"alpha"}]`},
+	}}
+	owners, err := NewClient(runner).DiscoverOwners(context.Background(), Config{Host: "git.example.com"})
+	if err != nil {
+		t.Fatalf("DiscoverOwners() error = %v", err)
+	}
+	want := []Owner{{Login: "alpha"}, {Login: "personal", Personal: true}, {Login: "zeta"}}
+	if !reflect.DeepEqual(owners, want) {
+		t.Errorf("DiscoverOwners() = %#v, want %#v", owners, want)
+	}
+	wantCalls := [][]string{{"api", "user"}, {"api", "--paginate", "user/orgs"}}
+	if len(runner.calls) != len(wantCalls) {
+		t.Fatalf("DiscoverOwners() calls = %d, want %d", len(runner.calls), len(wantCalls))
+	}
+	for index, wantArgs := range wantCalls {
+		if !reflect.DeepEqual(runner.calls[index].args, wantArgs) {
+			t.Errorf("call %d args = %#v, want %#v", index, runner.calls[index].args, wantArgs)
+		}
+		if got := runner.calls[index].environment["GH_HOST"]; got != "git.example.com" {
+			t.Errorf("call %d GH_HOST = %q, want git.example.com", index, got)
+		}
+	}
+}
+
+func TestClientDiscoverOwnersUsesDefaultHostEnvironment(t *testing.T) {
+	runner := &fakeCommandRunner{results: []fakeCommandResult{{stdout: `{"login":"personal"}`}, {stdout: `[]`}}}
+	owners, err := NewClient(runner).DiscoverOwners(context.Background(), Config{Host: "github.com"})
+	if err != nil {
+		t.Fatalf("DiscoverOwners() error = %v", err)
+	}
+	if want := []Owner{{Login: "personal", Personal: true}}; !reflect.DeepEqual(owners, want) {
+		t.Errorf("DiscoverOwners() = %#v, want %#v", owners, want)
+	}
+	for index, call := range runner.calls {
+		if call.environment != nil {
+			t.Errorf("call %d environment = %#v, want nil", index, call.environment)
+		}
+	}
+}
+
+func TestClientDiscoverOwnersRejectsInvalidIdentities(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []fakeCommandResult
+	}{
+		{name: "malformed user", results: []fakeCommandResult{{stdout: `{`}}},
+		{name: "empty user", results: []fakeCommandResult{{stdout: `{"login":" "}`}}},
+		{name: "malformed organizations", results: []fakeCommandResult{{stdout: `{"login":"personal"}`}, {stdout: `[{`}}},
+		{name: "empty organization", results: []fakeCommandResult{{stdout: `{"login":"personal"}`}, {stdout: `[{"login":""}]`}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewClient(&fakeCommandRunner{results: test.results}).DiscoverOwners(context.Background(), Config{Host: "github.com"})
+			if err == nil {
+				t.Fatal("DiscoverOwners() error = nil, want parse error")
+			}
+		})
+	}
+}
+
+func TestClientDiscoverOwnersWrapsCommandFailures(t *testing.T) {
+	commandError := errors.New("command failed")
+	tests := []struct {
+		name    string
+		results []fakeCommandResult
+	}{
+		{name: "user", results: []fakeCommandResult{{stderr: "user failed", err: commandError}}},
+		{name: "organizations", results: []fakeCommandResult{{stdout: `{"login":"personal"}`}, {stderr: "orgs failed", err: commandError}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewClient(&fakeCommandRunner{results: test.results}).DiscoverOwners(context.Background(), Config{Host: "github.com"})
+			if !errors.Is(err, ErrExternalCommand) || !errors.Is(err, commandError) {
+				t.Fatalf("DiscoverOwners() error = %v, want wrapped command errors", err)
+			}
+		})
+	}
+}
+
+func TestClientDiscoverOwnersPreservesCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		results []fakeCommandResult
+	}{
+		{name: "user", results: []fakeCommandResult{{err: errors.New("stopped")}}},
+		{name: "organizations", results: []fakeCommandResult{{stdout: `{"login":"personal"}`}, {err: errors.New("stopped")}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := NewClient(&fakeCommandRunner{results: test.results}).DiscoverOwners(ctx, Config{Host: "github.com"})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("DiscoverOwners() error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
 func TestClientCloneRepository(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	config := Config{Host: "github.com"}

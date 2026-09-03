@@ -25,7 +25,7 @@ func (s *Service) Add(ctx context.Context, name, path string) (Workspace, error)
 		return Workspace{}, errors.New("workspace name is required")
 	}
 
-	localPath, err := platform.ResolveDirectory(path)
+	localPath, err := platform.ResolveWorkspaceDirectory(name, path)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("resolve workspace path: %w", err)
 	}

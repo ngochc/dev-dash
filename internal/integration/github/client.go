@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -31,6 +32,11 @@ type Repository struct {
 
 type DefaultBranchRef struct {
 	Name string `json:"name"`
+}
+
+type Owner struct {
+	Login    string
+	Personal bool
 }
 
 type CommandResult struct {
@@ -119,6 +125,79 @@ func (c *Client) Discover(ctx context.Context, config Config) ([]Repository, err
 		return repositories[i].NameWithOwner < repositories[j].NameWithOwner
 	})
 	return repositories, nil
+}
+
+func (c *Client) DiscoverOwners(ctx context.Context, config Config) ([]Owner, error) {
+	userResult, err := c.runner.Run(ctx, hostEnvironment(config.Host), "api", "user")
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, clientError{
+			message: "GitHub owner discovery failed" + commandDetail(userResult.Stderr),
+			cause:   errors.Join(ErrExternalCommand, err),
+		}
+	}
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := json.Unmarshal(userResult.Stdout, &user); err != nil {
+		return nil, fmt.Errorf("parse GitHub authenticated user: %w", err)
+	}
+	user.Login = strings.TrimSpace(user.Login)
+	if user.Login == "" {
+		return nil, fmt.Errorf("parse GitHub authenticated user: identity is empty")
+	}
+
+	organizationResult, err := c.runner.Run(ctx, hostEnvironment(config.Host), "api", "--paginate", "user/orgs")
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, clientError{
+			message: "GitHub organization discovery failed" + commandDetail(organizationResult.Stderr),
+			cause:   errors.Join(ErrExternalCommand, err),
+		}
+	}
+
+	ownersByLogin := map[string]Owner{
+		strings.ToLower(user.Login): {Login: user.Login, Personal: true},
+	}
+	decoder := json.NewDecoder(bytes.NewReader(organizationResult.Stdout))
+	for {
+		var page []struct {
+			Login string `json:"login"`
+		}
+		if err := decoder.Decode(&page); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("parse GitHub organizations: %w", err)
+		}
+		for _, organization := range page {
+			login := strings.TrimSpace(organization.Login)
+			if login == "" {
+				return nil, fmt.Errorf("parse GitHub organizations: identity is empty")
+			}
+			key := strings.ToLower(login)
+			if _, exists := ownersByLogin[key]; !exists {
+				ownersByLogin[key] = Owner{Login: login}
+			}
+		}
+	}
+
+	owners := make([]Owner, 0, len(ownersByLogin))
+	for _, owner := range ownersByLogin {
+		owners = append(owners, owner)
+	}
+	sort.Slice(owners, func(i, j int) bool {
+		left, right := strings.ToLower(owners[i].Login), strings.ToLower(owners[j].Login)
+		if left == right {
+			return owners[i].Login < owners[j].Login
+		}
+		return left < right
+	})
+	return owners, nil
 }
 
 func (c *Client) Clone(ctx context.Context, config Config, repository, destination string) error {

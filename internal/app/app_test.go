@@ -56,6 +56,20 @@ func TestRunTopLevelCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestHelpListsGuidedWorkspaceCommands(t *testing.T) {
+	var output bytes.Buffer
+	printHelp(&output)
+	for _, command := range []string{
+		"devdash workspace setup <workspace>",
+		"devdash workspace check <workspace>",
+		"devdash repo pick <workspace>",
+	} {
+		if !strings.Contains(output.String(), command) {
+			t.Errorf("help output = %q, want containing %q", output.String(), command)
+		}
+	}
+}
 func TestRunUpdate(t *testing.T) {
 	ctx := context.Background()
 	var output bytes.Buffer

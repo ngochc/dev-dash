@@ -22,6 +22,12 @@ func runWorkspace(ctx context.Context, args []string, input io.Reader, output io
 	if err := validateWorkspaceArgs(args); err != nil {
 		return err
 	}
+	switch args[0] {
+	case "setup":
+		return runWorkspaceSetup(ctx, args[1], input, output)
+	case "check":
+		return runWorkspaceCheck(ctx, args[1], output)
+	}
 
 	dbPath, err := config.DatabasePath()
 	if err != nil {
@@ -78,7 +84,7 @@ func runWorkspace(ctx context.Context, args []string, input io.Reader, output io
 
 func validateWorkspaceArgs(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("workspace command required: list, add, show, or remove")
+		return fmt.Errorf("workspace command required: list, add, show, remove, setup, or check")
 	}
 
 	switch args[0] {
@@ -97,6 +103,14 @@ func validateWorkspaceArgs(args []string) error {
 	case "remove":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: devdash workspace remove <name-or-id>")
+		}
+	case "setup":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: devdash workspace setup <workspace>")
+		}
+	case "check":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: devdash workspace check <workspace>")
 		}
 	default:
 		return fmt.Errorf("unknown workspace command: %s", args[0])

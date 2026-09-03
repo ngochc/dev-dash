@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -27,17 +28,36 @@ func TestServiceAddWithExplicitPath(t *testing.T) {
 	}
 }
 
-func TestServiceAddUsesCurrentDirectory(t *testing.T) {
-	directory := t.TempDir()
-	t.Chdir(directory)
+func TestServiceAddCreatesDefaultDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	service := NewService(newFakeRepository())
 
 	item, err := service.Add(context.Background(), "devdash", "")
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
-	if item.LocalPath != directory {
-		t.Errorf("Add() path = %q, want %q", item.LocalPath, directory)
+	want := filepath.Join(home, "devdash", "devdash")
+	if item.LocalPath != want {
+		t.Errorf("Add() path = %q, want %q", item.LocalPath, want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("default directory stat = (%v, %v), want existing directory", info, err)
+	}
+}
+
+func TestServiceAddKeepsDefaultDirectoryWhenCreateFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repository := newFakeRepository()
+	repository.createErr = errors.New("create failed")
+
+	if _, err := NewService(repository).Add(context.Background(), "devdash", ""); err == nil {
+		t.Fatal("Add() error = nil, want create error")
+	}
+	want := filepath.Join(home, "devdash", "devdash")
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("default directory stat = (%v, %v), want retained directory", info, err)
 	}
 }
 

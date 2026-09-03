@@ -70,6 +70,21 @@ go version
 
 The repository pins Go in `.tool-versions`. The current `Makefile` defines no working targets, so use direct Go commands.
 
+## Getting Started
+
+Create a workspace, complete the guided GitHub setup, verify readiness, and inspect the resulting repository snapshot:
+
+```bash
+devdash workspace add devdash
+devdash workspace setup devdash
+devdash workspace check devdash
+devdash repo list devdash
+```
+
+When the path is omitted, `workspace add` creates `~/devdash/<workspace>`. An explicit path remains supported. `workspace setup` guides GitHub or GitHub Enterprise host selection, owner selection (including the authenticated personal account), repository selection, and clone confirmation. In an interactive terminal it uses `fzf` when available; otherwise it provides the same choices as numbered prompts. It never installs `gh` or authenticates on the user's behalf.
+
+Run `devdash repo pick <workspace>` later to refresh metadata once and choose more repositories without repeating configuration. `workspace check` is non-mutating: it validates the saved configuration and authentication, checks the workspace root, and reports cached repository checkout states without refreshing discovery.
+
 ## Usage
 
 Show help:
@@ -94,7 +109,9 @@ Manage workspaces:
 
 ```bash
 go run ./cmd/devdash workspace list
-go run ./cmd/devdash workspace add devdash "$PWD"
+go run ./cmd/devdash workspace add devdash
+# Or register an existing directory explicitly:
+go run ./cmd/devdash workspace add existing "$PWD"
 go run ./cmd/devdash workspace show devdash
 go run ./cmd/devdash workspace remove devdash
 ```
@@ -114,11 +131,12 @@ Configuration keys remain open-ended, but keys beginning with `_` are reserved f
 
 GitHub operations apply the default `github.base_url=https://github.com` when no override is stored. They fail before invoking `gh` when `github.org` is missing or the base URL is invalid, and explain how to complete the configuration. `gh` authentication remains external to Devdash; GitHub Enterprise commands receive a process-local `GH_HOST` without changing global GitHub CLI configuration.
 
-Refresh repository metadata, inspect derived clone state, and clone selected or all repositories:
+Refresh repository metadata, inspect derived clone state, choose repositories interactively, and retain direct clone commands for manual use:
 
 ```bash
 go run ./cmd/devdash repo refresh devdash
 go run ./cmd/devdash repo list devdash
+go run ./cmd/devdash repo pick devdash
 go run ./cmd/devdash repo clone devdash web api
 go run ./cmd/devdash repo clone devdash --all
 ```
@@ -156,8 +174,10 @@ Current command behavior:
 | `devdash update` | Reinstalls the latest checksum-verified GitHub Release over the resolved current executable. |
 | `devdash config keys [provider]` | Lists configuration keys understood by integrations, including requirements and defaults. |
 | `devdash workspace list` | Lists workspaces ordered by name. |
-| `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or the current directory. |
+| `devdash workspace add <name> [path]` | Adds a workspace using the supplied directory or creates `~/devdash/<name>` when omitted. |
 | `devdash workspace show <name-or-id>` | Shows a workspace, resolving exact ID before exact name. |
+| `devdash workspace setup <workspace>` | Guides GitHub host and owner configuration, refreshes repositories, and optionally clones selected repositories. |
+| `devdash workspace check <workspace>` | Reports workspace, GitHub, and cached repository readiness without mutating configuration or discovery state. |
 | `devdash workspace remove <name-or-id>` | Removes a workspace, resolving exact ID before exact name. |
 | `devdash workspace config list <workspace>` | Lists namespaced configuration ordered by namespace and key. |
 | `devdash workspace config get <workspace> <key>` | Prints one raw configuration value. |
@@ -166,6 +186,7 @@ Current command behavior:
 | `devdash workspace config edit <workspace>` | Atomically replaces user configuration through `$VISUAL` or `$EDITOR` while preserving reserved internal keys. |
 | `devdash repo refresh <workspace>` | Discovers up to 1000 non-archived GitHub repositories and idempotently associates them with the workspace. |
 | `devdash repo list <workspace>` | Lists known repositories with clone state derived only from tracked checkout paths. |
+| `devdash repo pick <workspace>` | Refreshes once, then interactively selects known repositories to clone or restore. |
 | `devdash repo clone <workspace> <repo> [<repo>...]` | Refreshes metadata and clones selected repositories by unique name or exact owner/name. |
 | `devdash repo clone <workspace> --all` | Refreshes metadata and clones or restores every repository that needs a checkout while reporting independent failures. |
 | `devdash resource-type list`, `show`, `add` | Lists, inspects, or registers stable provider-neutral resource types. |

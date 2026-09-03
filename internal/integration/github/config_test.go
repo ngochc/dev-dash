@@ -43,6 +43,35 @@ func TestResolveConfigUsesStoredOverride(t *testing.T) {
 	}
 }
 
+func TestResolveHostConfigAppliesDefault(t *testing.T) {
+	config, err := ResolveHostConfig(nil)
+	if err != nil {
+		t.Fatalf("ResolveHostConfig() error = %v", err)
+	}
+	want := Config{BaseURL: DefaultBaseURL, Host: "github.com"}
+	if config != want {
+		t.Errorf("ResolveHostConfig() = %#v, want %#v", config, want)
+	}
+}
+
+func TestResolveHostConfigNormalizesGHES(t *testing.T) {
+	config, err := ResolveHostConfig(map[string]string{"base_url": "https://Git.Example.com///"})
+	if err != nil {
+		t.Fatalf("ResolveHostConfig() error = %v", err)
+	}
+	want := Config{BaseURL: "https://Git.Example.com", Host: "git.example.com"}
+	if config != want {
+		t.Errorf("ResolveHostConfig() = %#v, want %#v", config, want)
+	}
+}
+
+func TestResolveHostConfigRejectsInvalidURL(t *testing.T) {
+	_, err := ResolveHostConfig(map[string]string{"base_url": "ssh://git.example.com"})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ResolveHostConfig() error = %v, want ErrInvalidConfig", err)
+	}
+}
+
 func TestResolveConfigMissingOrganization(t *testing.T) {
 	_, err := ResolveConfig("mqms", nil)
 	if !errors.Is(err, ErrIncompleteConfig) {

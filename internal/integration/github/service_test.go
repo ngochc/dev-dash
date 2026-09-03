@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
-func TestServiceRefreshValidatesConfigBeforeGitHub(t *testing.T) {
+func TestServiceCheckValidatesConfigBeforeGitHub(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		values map[string]string
@@ -25,14 +26,41 @@ func TestServiceRefreshValidatesConfigBeforeGitHub(t *testing.T) {
 			client := &fakeRepositoryClient{}
 			store := &fakeRepositoryStore{}
 			service := newTestService(test.values, store, client, &fakeCheckoutInspector{}, &fakeDirectoryManager{})
-			_, _, err := service.Refresh(context.Background(), "workspace")
+			_, _, err := service.Check(context.Background(), "workspace")
 			if !errors.Is(err, test.want) {
-				t.Fatalf("Refresh() error = %v, want %v", err, test.want)
+				t.Fatalf("Check() error = %v, want %v", err, test.want)
 			}
-			if client.validateCalls != 0 || client.discoverCalls != 0 || store.upsertCalls != 0 {
-				t.Fatalf("invalid config invoked dependencies: client=%d/%d store=%d", client.validateCalls, client.discoverCalls, store.upsertCalls)
+			if client.validateCalls != 0 || client.discoverCalls != 0 || store.upsertCalls != 0 || store.listCalls != 0 {
+				t.Fatalf("invalid config invoked dependencies: client=%d/%d store=%d/%d", client.validateCalls, client.discoverCalls, store.upsertCalls, store.listCalls)
 			}
 		})
+	}
+}
+
+func TestServiceCheckOnlyValidatesReadiness(t *testing.T) {
+	client := &fakeRepositoryClient{}
+	store := &fakeRepositoryStore{}
+	directories := &fakeDirectoryManager{}
+	service := newTestService(map[string]string{"org": "team"}, store, client, &fakeCheckoutInspector{}, directories)
+
+	item, config, err := service.Check(context.Background(), "workspace")
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if item.ID != "workspace-id" || config.Organization != "team" {
+		t.Errorf("Check() = (%#v, %#v), want resolved workspace and config", item, config)
+	}
+	if client.validateCalls != 1 || client.discoverCalls != 0 || store.upsertCalls != 0 || store.listCalls != 0 || len(store.checkouts) != 0 || len(directories.paths) != 0 {
+		t.Fatalf("Check() mutated or inspected state: client=%d/%d store=%d/%d/%d directories=%d", client.validateCalls, client.discoverCalls, store.upsertCalls, store.listCalls, len(store.checkouts), len(directories.paths))
+	}
+}
+
+func TestServiceCheckPreservesAuthenticationError(t *testing.T) {
+	client := &fakeRepositoryClient{validateErr: fmt.Errorf("validate: %w", ErrAuthentication)}
+	service := newTestService(map[string]string{"org": "team"}, &fakeRepositoryStore{}, client, &fakeCheckoutInspector{}, &fakeDirectoryManager{})
+	_, _, err := service.Check(context.Background(), "workspace")
+	if !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("Check() error = %v, want ErrAuthentication", err)
 	}
 }
 
@@ -70,6 +98,40 @@ func TestServiceRefreshDiscoversAndStoresRepositories(t *testing.T) {
 	}
 	if !reflect.DeepEqual(store.remotes, wantRemotes) {
 		t.Errorf("stored remotes = %#v, want %#v", store.remotes, wantRemotes)
+	}
+	if client.validateCalls != 1 || client.discoverCalls != 1 {
+		t.Errorf("Refresh() client calls = validate %d, discover %d; want one each", client.validateCalls, client.discoverCalls)
+	}
+}
+
+func TestServiceCloneKnownUsesCachedRepositoriesInSelectedOrder(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "workspace")
+	firstPath := filepath.Join(workspacePath, "repos", "first")
+	secondPath := filepath.Join(workspacePath, "repos", "second")
+	store := &fakeRepositoryStore{items: []repositorydomain.Repository{
+		{ResourceID: "1", ExternalKey: "team/first", Name: "first", URL: "https://github.com/team/first", CheckoutPath: firstPath},
+		{ResourceID: "2", ExternalKey: "team/second", Name: "second", URL: "https://github.com/team/second", CheckoutPath: secondPath},
+	}}
+	inspector := &fakeCheckoutInspector{results: map[string][]repositorydomain.CheckoutInspection{
+		firstPath:  {{Exists: true, Valid: true}},
+		secondPath: {{Exists: true, Valid: true}},
+	}}
+	client := &fakeRepositoryClient{}
+	service := newTestServiceWithPath(workspacePath, map[string]string{"org": "team"}, store, client, inspector, &fakeDirectoryManager{})
+
+	_, results, err := service.CloneKnown(context.Background(), "workspace", []string{"team/second", "team/first"})
+	if err != nil {
+		t.Fatalf("CloneKnown() error = %v", err)
+	}
+	want := []repositorydomain.CloneResult{
+		{Repository: "team/second", Status: "already cloned"},
+		{Repository: "team/first", Status: "already cloned"},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Errorf("CloneKnown() results = %#v, want %#v", results, want)
+	}
+	if client.validateCalls != 1 || client.discoverCalls != 0 || store.upsertCalls != 0 || store.listCalls != 1 {
+		t.Errorf("CloneKnown() calls: validate=%d discover=%d upsert=%d list=%d", client.validateCalls, client.discoverCalls, store.upsertCalls, store.listCalls)
 	}
 }
 
@@ -119,6 +181,9 @@ func TestServiceCloneAllHandlesDerivedStatesIndependently(t *testing.T) {
 	}
 	if len(store.checkouts) != 2 {
 		t.Errorf("registered checkouts = %#v, want missing and new", store.checkouts)
+	}
+	if client.validateCalls != 1 || client.discoverCalls != 1 || store.upsertCalls != 1 || store.listCalls != 1 {
+		t.Errorf("Clone() calls: validate=%d discover=%d upsert=%d list=%d", client.validateCalls, client.discoverCalls, store.upsertCalls, store.listCalls)
 	}
 }
 
@@ -271,6 +336,8 @@ func (r *fakeConfigRepository) ReplaceUser(context.Context, string, []workspace.
 type fakeRepositoryClient struct {
 	repositories     []Repository
 	cloneErrors      map[string]error
+	validateErr      error
+	discoverErr      error
 	validateCalls    int
 	discoverCalls    int
 	validatedConfig  Config
@@ -281,12 +348,12 @@ type fakeRepositoryClient struct {
 func (c *fakeRepositoryClient) Validate(_ context.Context, config Config) error {
 	c.validateCalls++
 	c.validatedConfig = config
-	return nil
+	return c.validateErr
 }
 func (c *fakeRepositoryClient) Discover(_ context.Context, config Config) ([]Repository, error) {
 	c.discoverCalls++
 	c.discoveredConfig = config
-	return append([]Repository(nil), c.repositories...), nil
+	return append([]Repository(nil), c.repositories...), c.discoverErr
 }
 func (c *fakeRepositoryClient) Clone(_ context.Context, _ Config, repository, _ string) error {
 	c.clones = append(c.clones, repository)
@@ -296,6 +363,7 @@ func (c *fakeRepositoryClient) Clone(_ context.Context, _ Config, repository, _ 
 type fakeRepositoryStore struct {
 	items       []repositorydomain.Repository
 	upsertCalls int
+	listCalls   int
 	source      repositorydomain.Source
 	workspaceID string
 	remotes     []repositorydomain.Remote
@@ -316,6 +384,7 @@ func (s *fakeRepositoryStore) UpsertDiscovered(_ context.Context, source reposit
 	return nil
 }
 func (s *fakeRepositoryStore) ListByWorkspace(context.Context, string) ([]repositorydomain.Repository, error) {
+	s.listCalls++
 	return append([]repositorydomain.Repository(nil), s.items...), nil
 }
 func (s *fakeRepositoryStore) SetCheckout(_ context.Context, workspaceID, resourceID, path string) error {

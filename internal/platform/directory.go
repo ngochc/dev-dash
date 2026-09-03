@@ -13,3 +13,14 @@ func (DirectoryManager) Ensure(path string) error {
 	}
 	return nil
 }
+
+func (DirectoryManager) Exists(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat directory %q: %w", path, err)
+	}
+	return info.IsDir(), nil
+}

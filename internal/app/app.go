@@ -36,7 +36,7 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 	case "config":
 		return runConfig(args[1:], output)
 	case "repo":
-		return runRepo(ctx, args[1:], output)
+		return runRepo(ctx, args[1:], input, output)
 
 	case "workspace":
 		return runWorkspace(ctx, args[1:], input, output)
@@ -69,6 +69,7 @@ func printHelp(output io.Writer) {
   devdash config keys [provider]
   devdash repo refresh <workspace>
   devdash repo list <workspace>
+  devdash repo pick <workspace>
   devdash repo clone <workspace> --all
   devdash repo clone <workspace> <repo> [<repo>...]
   devdash secret set <key>
@@ -90,6 +91,8 @@ func printHelp(output io.Writer) {
   devdash workspace list
   devdash workspace add <name> [path]
   devdash workspace show <name-or-id>
+  devdash workspace setup <workspace>
+  devdash workspace check <workspace>
   devdash workspace remove <name-or-id>
   devdash workspace config list <workspace>
   devdash workspace config get <workspace> <key>

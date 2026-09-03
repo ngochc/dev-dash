@@ -45,17 +45,30 @@ func NewService(
 	}
 }
 
-func (s *Service) Refresh(ctx context.Context, workspaceIdentifier string) (workspace.Workspace, int, error) {
+func (s *Service) Check(ctx context.Context, workspaceIdentifier string) (workspace.Workspace, Config, error) {
 	item, config, err := s.prepare(ctx, workspaceIdentifier)
 	if err != nil {
-		return workspace.Workspace{}, 0, err
+		return workspace.Workspace{}, Config{}, err
 	}
 	if err := s.client.Validate(ctx, config); err != nil {
-		return workspace.Workspace{}, 0, err
+		return workspace.Workspace{}, Config{}, err
+	}
+	return item, config, nil
+}
+
+func (s *Service) Refresh(ctx context.Context, workspaceIdentifier string) (workspace.Workspace, int, error) {
+	item, _, count, err := s.refresh(ctx, workspaceIdentifier)
+	return item, count, err
+}
+
+func (s *Service) refresh(ctx context.Context, workspaceIdentifier string) (workspace.Workspace, Config, int, error) {
+	item, config, err := s.Check(ctx, workspaceIdentifier)
+	if err != nil {
+		return workspace.Workspace{}, Config{}, 0, err
 	}
 	remoteRepositories, err := s.client.Discover(ctx, config)
 	if err != nil {
-		return workspace.Workspace{}, 0, err
+		return workspace.Workspace{}, Config{}, 0, err
 	}
 	remotes := make([]repositorydomain.Remote, len(remoteRepositories))
 	for i, remote := range remoteRepositories {
@@ -68,9 +81,9 @@ func (s *Service) Refresh(ctx context.Context, workspaceIdentifier string) (work
 	}
 	source := repositorydomain.Source{Provider: "github", Name: config.Host, BaseURL: config.BaseURL}
 	if err := s.store.UpsertDiscovered(ctx, source, item.ID, remotes); err != nil {
-		return workspace.Workspace{}, 0, fmt.Errorf("store discovered repositories: %w", err)
+		return workspace.Workspace{}, Config{}, 0, fmt.Errorf("store discovered repositories: %w", err)
 	}
-	return item, len(remotes), nil
+	return item, config, len(remotes), nil
 }
 
 func (s *Service) List(ctx context.Context, workspaceIdentifier string) (workspace.Workspace, []repositorydomain.Listed, error) {
@@ -90,18 +103,22 @@ func (s *Service) List(ctx context.Context, workspaceIdentifier string) (workspa
 }
 
 func (s *Service) Clone(ctx context.Context, workspaceIdentifier string, selectors []string, all bool) (workspace.Workspace, []repositorydomain.CloneResult, error) {
-	item, _, err := s.Refresh(ctx, workspaceIdentifier)
+	item, config, _, err := s.refresh(ctx, workspaceIdentifier)
 	if err != nil {
 		return workspace.Workspace{}, nil, err
 	}
-	configValues, err := s.configService.Namespace(ctx, item.ID, "github")
+	return s.cloneKnown(ctx, item, config, selectors, all)
+}
+
+func (s *Service) CloneKnown(ctx context.Context, workspaceIdentifier string, selectors []string) (workspace.Workspace, []repositorydomain.CloneResult, error) {
+	item, config, err := s.Check(ctx, workspaceIdentifier)
 	if err != nil {
 		return workspace.Workspace{}, nil, err
 	}
-	config, err := ResolveConfig(item.Name, configValues)
-	if err != nil {
-		return workspace.Workspace{}, nil, err
-	}
+	return s.cloneKnown(ctx, item, config, selectors, false)
+}
+
+func (s *Service) cloneKnown(ctx context.Context, item workspace.Workspace, config Config, selectors []string, all bool) (workspace.Workspace, []repositorydomain.CloneResult, error) {
 	items, err := s.store.ListByWorkspace(ctx, item.ID)
 	if err != nil {
 		return workspace.Workspace{}, nil, fmt.Errorf("list workspace repositories: %w", err)
