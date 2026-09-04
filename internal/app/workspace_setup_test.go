@@ -45,7 +45,7 @@ func TestExecuteWorkspaceSetupKeepsExistingConfiguration(t *testing.T) {
 
 func TestExecuteWorkspaceSetupSelectsDefaultHostAndPersonalOwner(t *testing.T) {
 	dependencies := newSetupDependencies()
-	dependencies.github.(*fakeSetupGitHub).owners = []githubintegration.Owner{{Login: "personal", Personal: true}, {Login: "team"}}
+	dependencies.github.(*fakeSetupGitHub).owners = []githubintegration.Owner{{Login: "team"}, {Login: "personal", Personal: true}}
 	pickerFake := dependencies.picker.(*fakeSetupPicker)
 	pickerFake.one = []string{"github.com", "personal"}
 	var output bytes.Buffer
@@ -57,8 +57,11 @@ func TestExecuteWorkspaceSetupSelectsDefaultHostAndPersonalOwner(t *testing.T) {
 	if config.setValues[githubintegration.BaseURLKey] != githubintegration.DefaultBaseURL || config.setValues[githubintegration.OrganizationKey] != "personal" {
 		t.Errorf("stored config = %#v", config.setValues)
 	}
-	if len(pickerFake.oneOptions) != 2 || pickerFake.oneOptions[1][0].Value != "personal" || pickerFake.oneOptions[1][0].Label != "personal (personal)" {
+	if len(pickerFake.oneOptions) != 2 || pickerFake.oneOptions[1][1].Value != "personal" || pickerFake.oneOptions[1][1].Label != "personal (personal)" {
 		t.Errorf("owner options = %#v, want personal account mapping", pickerFake.oneOptions)
+	}
+	if got, want := pickerFake.oneDefaults, []string{"github.com", "personal"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("picker defaults = %#v, want %#v", got, want)
 	}
 }
 
@@ -263,6 +266,9 @@ func TestExecuteWorkspaceSetupDeclineAndCancellationDoNotClone(t *testing.T) {
 		if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies); err != nil {
 			t.Fatalf("executeWorkspaceSetup() error = %v", err)
 		}
+		if got, want := pickerFake.oneDefaults, []string{"github.com", ""}; !reflect.DeepEqual(got, want) {
+			t.Errorf("picker defaults = %#v, want %#v", got, want)
+		}
 		config := dependencies.config.(*fakeSetupConfig)
 		if config.setValues[githubintegration.BaseURLKey] != githubintegration.DefaultBaseURL {
 			t.Error("setup did not retain explicit host before owner cancellation")
@@ -401,12 +407,14 @@ type fakeSetupPicker struct {
 	inputs      []string
 	inputErrors []error
 	oneOptions  [][]picker.Option
+	oneDefaults []string
 	manyOptions [][]picker.Option
 	manyCalls   int
 }
 
-func (f *fakeSetupPicker) PickOne(_ context.Context, _ string, options []picker.Option) (string, error) {
+func (f *fakeSetupPicker) PickOne(_ context.Context, _ string, options []picker.Option, defaultValue string) (string, error) {
 	f.oneOptions = append(f.oneOptions, append([]picker.Option(nil), options...))
+	f.oneDefaults = append(f.oneDefaults, defaultValue)
 	var value string
 	if len(f.one) > 0 {
 		value, f.one = f.one[0], f.one[1:]

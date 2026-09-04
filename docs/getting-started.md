@@ -39,7 +39,7 @@ With no path argument, this creates and registers `~/devdash/mqms`. See [Workspa
 devdash workspace setup mqms
 ```
 
-Setup chooses a GitHub or GitHub Enterprise host, validates `gh` authentication, chooses a personal login or organization, refreshes repository metadata, and optionally clones selected repositories. Devdash does not install `gh` or authenticate for you.
+Setup chooses a GitHub or GitHub Enterprise host, validates `gh` authentication, chooses a personal login or organization, refreshes repository metadata, and optionally clones selected repositories. At host selection, blank Enter uses `github.com`; after owner discovery, blank Enter uses the authenticated personal login when one is available. Devdash does not install `gh` or authenticate for you.
 
 For GitHub.com authentication:
 
@@ -53,7 +53,7 @@ For GitHub Enterprise Server:
 gh auth login --hostname git.example.com
 ```
 
-Canceling a required host or owner prints `Workspace setup cancelled.` and succeeds. A selected host may already have been saved before later owner cancellation. Canceling or leaving repository selection empty, or declining clone confirmation, completes setup without cloning. See [GitHub Integration](integrations/github.md).
+Esc or EOF at a required host or owner selection prints `Workspace setup cancelled.` and succeeds; blank Enter also cancels when that prompt has no default. A selected host may already have been saved before later owner cancellation. Canceling or leaving repository selection empty, or declining clone confirmation, completes setup without cloning. See [GitHub Integration](integrations/github.md).
 
 ## Check readiness
 

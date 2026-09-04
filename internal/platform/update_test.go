@@ -210,7 +210,12 @@ func TestUpdatePreservesDownloadAndContextErrors(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			client := &http.Client{Transport: test.transport}
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if !strings.HasSuffix(output.String(), "Downloading installer...\n") {
+					t.Errorf("update() output at RoundTrip = %q, want download progress started", output.String())
+				}
+				return test.transport(request)
+			})}
 			err := update(test.ctx, &output, executable, "https://example.test/install.sh", client)
 			if !errors.Is(err, test.cause) {
 				t.Fatalf("update() error = %v, want wrapped %v", err, test.cause)

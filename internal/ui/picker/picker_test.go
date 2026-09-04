@@ -26,28 +26,51 @@ func TestPickOneUsesFZFAndMapsValue(t *testing.T) {
 		if executable != "/tools/fzf" {
 			t.Errorf("executable = %q, want /tools/fzf", executable)
 		}
-		wantArguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repository: ", "--header=↑/↓ move • Enter select • Esc cancel"}
+		wantArguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repository: ", "--header=↑/↓ move • Enter select • Esc cancel", "--sync", "--bind=start:pos(2)"}
 		if !reflect.DeepEqual(arguments, wantArguments) {
 			t.Errorf("arguments = %#v, want %#v", arguments, wantArguments)
 		}
-		if got, want := string(records), "1\tDuplicate label\n2\tDuplicate label\n"; got != want {
+		if got, want := string(records), "1\tDuplicate label\n2\tDuplicate label [default]\n"; got != want {
 			t.Errorf("records = %q, want %q", got, want)
 		}
 		if stderr != output {
 			t.Error("stderr was not wired to picker output")
 		}
-		return []byte("2\tDuplicate label\n"), nil
+		return []byte("2\tDuplicate label [default]\n"), nil
 	}
 
 	got, err := picker.PickOne(context.Background(), "Repository", []Option{
 		{Value: "owner/first", Label: "Duplicate label"},
 		{Value: "owner/second", Label: "Duplicate label"},
-	})
+	}, "owner/second")
 	if err != nil {
 		t.Fatalf("PickOne() error = %v", err)
 	}
 	if got != "owner/second" {
 		t.Errorf("PickOne() = %q, want owner/second", got)
+	}
+}
+
+func TestPickOneRejectsUnavailableDefault(t *testing.T) {
+	output := &descriptorWriter{}
+	picker := newTerminalPicker(&descriptorReader{Reader: strings.NewReader("")}, output)
+	picker.isTerminal = func(int) bool { return true }
+	picker.lookPath = func(string) (string, error) { return "/tools/fzf", nil }
+	called := false
+	picker.runFZF = func(context.Context, string, []string, []byte, io.Writer) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+
+	_, err := picker.PickOne(context.Background(), "Repository", testOptions(), "missing")
+	if got, want := fmt.Sprint(err), `default selection "missing" is not an option`; got != want {
+		t.Fatalf("PickOne() error = %q, want %q", got, want)
+	}
+	if called {
+		t.Fatal("PickOne() ran fzf for an unavailable default")
+	}
+	if output.Len() != 0 {
+		t.Errorf("picker output = %q, want no prompt", output.String())
 	}
 }
 
@@ -81,7 +104,7 @@ func TestFZFContextAndErrorsPreserveCauses(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := picker.PickOne(ctx, "Title", testOptions())
+		_, err := picker.PickOne(ctx, "Title", testOptions(), "")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("PickOne() error = %v, want context.Canceled", err)
 		}
@@ -97,7 +120,7 @@ func TestFZFContextAndErrorsPreserveCauses(t *testing.T) {
 			cancel()
 			return nil, errors.New("process killed")
 		}
-		_, err := picker.PickOne(ctx, "Title", testOptions())
+		_, err := picker.PickOne(ctx, "Title", testOptions(), "")
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("PickOne() error = %v, want context.Canceled", err)
 		}
@@ -109,7 +132,7 @@ func TestFZFContextAndErrorsPreserveCauses(t *testing.T) {
 		picker.runFZF = func(context.Context, string, []string, []byte, io.Writer) ([]byte, error) {
 			return nil, processError
 		}
-		_, err := picker.PickOne(context.Background(), "Title", testOptions())
+		_, err := picker.PickOne(context.Background(), "Title", testOptions(), "")
 		if !errors.Is(err, processError) {
 			t.Fatalf("PickOne() error = %v, want process error", err)
 		}
@@ -131,7 +154,7 @@ func TestFZFCancellationAndEmptyOutput(t *testing.T) {
 			picker.runFZF = func(context.Context, string, []string, []byte, io.Writer) ([]byte, error) {
 				return test.output, test.err
 			}
-			if _, err := picker.PickOne(context.Background(), "Title", testOptions()); !errors.Is(err, ErrCancelled) {
+			if _, err := picker.PickOne(context.Background(), "Title", testOptions(), ""); !errors.Is(err, ErrCancelled) {
 				t.Fatalf("PickOne() error = %v, want ErrCancelled", err)
 			}
 		})
@@ -143,7 +166,7 @@ func TestFZFRejectsMalformedOutput(t *testing.T) {
 	picker.runFZF = func(context.Context, string, []string, []byte, io.Writer) ([]byte, error) {
 		return []byte("missing delimiter\n"), nil
 	}
-	if _, err := picker.PickOne(context.Background(), "Title", testOptions()); err == nil || errors.Is(err, ErrCancelled) {
+	if _, err := picker.PickOne(context.Background(), "Title", testOptions(), ""); err == nil || errors.Is(err, ErrCancelled) {
 		t.Fatalf("PickOne() error = %v, want malformed output error", err)
 	}
 }
@@ -155,7 +178,7 @@ func TestUnavailableFZFFallsBackToNumberedPicker(t *testing.T) {
 	picker.isTerminal = func(int) bool { return true }
 	picker.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 
-	got, err := picker.PickOne(context.Background(), "Repository", testOptions())
+	got, err := picker.PickOne(context.Background(), "Repository", testOptions(), "")
 	if err != nil {
 		t.Fatalf("PickOne() error = %v", err)
 	}
@@ -170,7 +193,7 @@ func TestUnavailableFZFFallsBackToNumberedPicker(t *testing.T) {
 func TestNumberedPickOneRepromptsInvalidInput(t *testing.T) {
 	var output bytes.Buffer
 	picker := New(strings.NewReader("wrong\n4\n2\n"), &output)
-	got, err := picker.PickOne(context.Background(), "Repository", testOptions())
+	got, err := picker.PickOne(context.Background(), "Repository", testOptions(), "")
 	if err != nil {
 		t.Fatalf("PickOne() error = %v", err)
 	}
@@ -179,6 +202,25 @@ func TestNumberedPickOneRepromptsInvalidInput(t *testing.T) {
 	}
 	if count := strings.Count(output.String(), "Enter a number from 1 to 3."); count != 2 {
 		t.Errorf("invalid instruction count = %d, want 2; output = %q", count, output.String())
+	}
+}
+
+func TestNumberedPickOneUsesDefault(t *testing.T) {
+	var output bytes.Buffer
+	picker := New(strings.NewReader("\n"), &output)
+
+	got, err := picker.PickOne(context.Background(), "Repository", testOptions(), "second")
+	if err != nil {
+		t.Fatalf("PickOne() error = %v", err)
+	}
+	if got != "second" {
+		t.Errorf("PickOne() = %q, want second", got)
+	}
+	want := "Repository\n  1. First\n  2. Second [default]\n  3. Third\n" +
+		"Type a number and press Enter; press Enter alone to use Second.\n" +
+		"Select [1-3]: "
+	if output.String() != want {
+		t.Errorf("picker output = %q, want %q", output.String(), want)
 	}
 }
 
@@ -198,8 +240,12 @@ func TestNumberedPickManyDeduplicatesInEnteredOrder(t *testing.T) {
 func TestNumberedPickCancellation(t *testing.T) {
 	for _, input := range []string{"\n", ""} {
 		picker := New(strings.NewReader(input), io.Discard)
+		if _, err := picker.PickOne(context.Background(), "Repository", testOptions(), ""); !errors.Is(err, ErrCancelled) {
+			t.Errorf("PickOne() with %q error = %v, want ErrCancelled", input, err)
+		}
+		picker = New(strings.NewReader(input), io.Discard)
 		if _, err := picker.PickMany(context.Background(), "Repositories", testOptions()); !errors.Is(err, ErrCancelled) {
-			t.Fatalf("PickMany() with %q error = %v, want ErrCancelled", input, err)
+			t.Errorf("PickMany() with %q error = %v, want ErrCancelled", input, err)
 		}
 	}
 }
@@ -233,7 +279,7 @@ func TestNumberedPickerDisplaysKeyboardHelp(t *testing.T) {
 			if test.multi {
 				_, _ = picker.PickMany(context.Background(), "Repository", testOptions())
 			} else {
-				_, _ = picker.PickOne(context.Background(), "Repository", testOptions())
+				_, _ = picker.PickOne(context.Background(), "Repository", testOptions(), "")
 			}
 			if got := output.String(); got != test.want {
 				t.Errorf("picker output = %q, want %q", got, test.want)
@@ -331,7 +377,7 @@ func TestInputTrimsAndUsesDefault(t *testing.T) {
 
 func TestSequentialPromptsShareBufferedInput(t *testing.T) {
 	picker := New(strings.NewReader("1\ny\ncustom\n"), io.Discard)
-	selected, err := picker.PickOne(context.Background(), "Repository", testOptions())
+	selected, err := picker.PickOne(context.Background(), "Repository", testOptions(), "")
 	if err != nil {
 		t.Fatalf("PickOne() error = %v", err)
 	}

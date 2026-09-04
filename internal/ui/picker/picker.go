@@ -22,7 +22,7 @@ type Option struct {
 }
 
 type Picker interface {
-	PickOne(context.Context, string, []Option) (string, error)
+	PickOne(context.Context, string, []Option, string) (string, error)
 	PickMany(context.Context, string, []Option) ([]string, error)
 	Confirm(string, bool) (bool, error)
 	Input(string, string) (string, error)
@@ -56,8 +56,8 @@ func newTerminalPicker(input io.Reader, output io.Writer) *terminalPicker {
 	}
 }
 
-func (p *terminalPicker) PickOne(ctx context.Context, title string, options []Option) (string, error) {
-	values, err := p.pick(ctx, title, options, false)
+func (p *terminalPicker) PickOne(ctx context.Context, title string, options []Option, defaultValue string) (string, error) {
+	values, err := p.pick(ctx, title, options, false, defaultValue)
 	if err != nil {
 		return "", err
 	}
@@ -65,20 +65,32 @@ func (p *terminalPicker) PickOne(ctx context.Context, title string, options []Op
 }
 
 func (p *terminalPicker) PickMany(ctx context.Context, title string, options []Option) ([]string, error) {
-	return p.pick(ctx, title, options, true)
+	return p.pick(ctx, title, options, true, "")
 }
 
-func (p *terminalPicker) pick(ctx context.Context, title string, options []Option, multi bool) ([]string, error) {
+func (p *terminalPicker) pick(ctx context.Context, title string, options []Option, multi bool, defaultValue string) ([]string, error) {
 	if len(options) == 0 {
 		return nil, ErrCancelled
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if executable, ok := p.fzfExecutable(); ok {
-		return p.pickFZF(ctx, executable, title, options, multi)
+	defaultIndex := -1
+	if defaultValue != "" {
+		for index, option := range options {
+			if option.Value == defaultValue {
+				defaultIndex = index
+				break
+			}
+		}
+		if defaultIndex == -1 {
+			return nil, fmt.Errorf("default selection %q is not an option", defaultValue)
+		}
 	}
-	return p.pickNumbered(title, options, multi)
+	if executable, ok := p.fzfExecutable(); ok {
+		return p.pickFZF(ctx, executable, title, options, multi, defaultIndex)
+	}
+	return p.pickNumbered(title, options, multi, defaultIndex)
 }
 
 func (p *terminalPicker) fzfExecutable() (string, bool) {
@@ -94,20 +106,27 @@ func (p *terminalPicker) fzfExecutable() (string, bool) {
 	return executable, true
 }
 
-func (p *terminalPicker) pickFZF(ctx context.Context, executable, title string, options []Option, multi bool) ([]string, error) {
+func (p *terminalPicker) pickFZF(ctx context.Context, executable, title string, options []Option, multi bool, defaultIndex int) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("run fzf: %w", err)
 	}
 
 	var input bytes.Buffer
 	for index, option := range options {
-		fmt.Fprintf(&input, "%d\t%s\n", index+1, option.Label)
+		label := option.Label
+		if index == defaultIndex {
+			label += " [default]"
+		}
+		fmt.Fprintf(&input, "%d\t%s\n", index+1, label)
 	}
 	header := "↑/↓ move • Enter select • Esc cancel"
 	if multi {
 		header = "↑/↓ move • Tab toggle • Enter confirm • Esc cancel"
 	}
 	arguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=" + title + ": ", "--header=" + header}
+	if defaultIndex >= 0 {
+		arguments = append(arguments, "--sync", fmt.Sprintf("--bind=start:pos(%d)", defaultIndex+1))
+	}
 	if multi {
 		arguments = append(arguments, "--multi")
 	}
@@ -159,13 +178,19 @@ func executeFZF(ctx context.Context, executable string, arguments []string, inpu
 	return command.Output()
 }
 
-func (p *terminalPicker) pickNumbered(title string, options []Option, multi bool) ([]string, error) {
+func (p *terminalPicker) pickNumbered(title string, options []Option, multi bool, defaultIndex int) ([]string, error) {
 	fmt.Fprintln(p.output, title)
 	for index, option := range options {
-		fmt.Fprintf(p.output, "  %d. %s\n", index+1, option.Label)
+		label := option.Label
+		if index == defaultIndex {
+			label += " [default]"
+		}
+		fmt.Fprintf(p.output, "  %d. %s\n", index+1, label)
 	}
 	if multi {
 		fmt.Fprintln(p.output, "Type comma-separated numbers and press Enter; press Enter alone to cancel.")
+	} else if defaultIndex >= 0 {
+		fmt.Fprintf(p.output, "Type a number and press Enter; press Enter alone to use %s.\n", options[defaultIndex].Label)
 	} else {
 		fmt.Fprintln(p.output, "Type a number and press Enter; press Enter alone to cancel.")
 	}
@@ -181,6 +206,9 @@ func (p *terminalPicker) pickNumbered(title string, options []Option, multi bool
 			return nil, err
 		}
 		if line == "" {
+			if defaultIndex >= 0 {
+				return []string{options[defaultIndex].Value}, nil
+			}
 			return nil, ErrCancelled
 		}
 

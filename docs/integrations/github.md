@@ -55,14 +55,14 @@ See [Repositories](../repositories.md) for resource mapping, selectors, states, 
 Setup performs these steps:
 
 1. Resolve and print the workspace.
-2. Keep or select a GitHub host.
+2. Keep or select a GitHub host; blank Enter uses `github.com` when selection is required.
 3. Save the selected host, then validate `gh` availability and authentication.
-4. Discover the personal login and organizations; keep, select, or enter an owner.
+4. Discover the personal login and organizations; keep, select, or enter an owner. Blank Enter uses the authenticated personal login when one is available.
 5. Save the owner and refresh repository discovery.
 6. Select repositories and optionally confirm cloning.
 7. Print completion counts and the next list command.
 
-Host selection may therefore be persisted before a later owner cancellation or failure. Canceling a required host or owner prints `Workspace setup cancelled.` and succeeds. A canceled or empty repository selection, or declined clone confirmation, still completes setup without cloning.
+Host selection may therefore be persisted before a later owner cancellation or failure. Esc or EOF at a required host or owner selection prints `Workspace setup cancelled.` and succeeds; blank Enter also cancels when that prompt has no default. A canceled or empty repository selection, or declined clone confirmation, still completes setup without cloning.
 
 ## Readiness status
 

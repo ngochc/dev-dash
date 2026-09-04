@@ -200,7 +200,7 @@ func selectGitHubHost(
 	choice, err := dependencies.picker.PickOne(ctx, "GitHub host", []picker.Option{
 		{Value: "github.com", Label: "github.com"},
 		{Value: "custom", Label: "Custom GitHub URL"},
-	})
+	}, "github.com")
 	if errors.Is(err, picker.ErrCancelled) {
 		return githubintegration.Config{}, true, nil
 	}
@@ -285,14 +285,18 @@ func selectGitHubOwner(
 	}
 
 	options := make([]picker.Option, len(owners))
+	defaultOwner := ""
 	for index, owner := range owners {
 		label := owner.Login
 		if owner.Personal {
 			label += " (personal)"
+			if defaultOwner == "" {
+				defaultOwner = owner.Login
+			}
 		}
 		options[index] = picker.Option{Value: owner.Login, Label: label}
 	}
-	organization, err := dependencies.picker.PickOne(ctx, "GitHub owner", options)
+	organization, err := dependencies.picker.PickOne(ctx, "GitHub owner", options, defaultOwner)
 	if errors.Is(err, picker.ErrCancelled) {
 		return "", true, nil
 	}
