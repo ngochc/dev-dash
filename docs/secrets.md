@@ -19,13 +19,13 @@ Secret keys must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
 Interactive input is preferred:
 
 ```bash
-devdash secret set jira.token
+devdash secret set confluence.pat
 ```
 
 When standard input is a terminal, Devdash prompts with `Secret (input hidden; Enter to submit):` and reads without echo. When standard input is not a terminal, it reads every byte until EOF:
 
 ```bash
-printf %s 'token' | devdash secret set jira.token
+printf %s 'token' | devdash secret set confluence.pat
 ```
 
 Do not use `echo` for this path: its trailing newline becomes part of the stored secret. Empty values are rejected.
@@ -40,10 +40,10 @@ Do not use `echo` for this path: its trailing newline becomes part of the stored
 Examples:
 
 ```bash
-devdash secret show jira.token
+devdash secret show confluence.pat
 devdash secret list
-devdash secret get jira.token
-devdash secret delete jira.token
+devdash secret get confluence.pat
+devdash secret delete confluence.pat
 ```
 
 ## Storage and exposure
@@ -55,10 +55,10 @@ Values are stored as application-readable text in SQLite. Devdash does not encry
 `secret:<key>` is the agreed convention for referring to a secret from configuration:
 
 ```text
+confluence.secret=secret:confluence.pat
 jira.secret=secret:jira.token
-confluence.secret=secret:atlassian.token
 ```
 
-Generic workspace configuration stores these references as text. Current GitHub behavior does not resolve secret references. Jira and Confluence reference resolution is planned with those integrations.
+Confluence resolves this reference at runtime and never stores the PAT in workspace configuration, resources, files, logs, or errors. Guided `workspace setup` reads a PAT without echo and validates it before storing a new or replacement value. GitHub uses external `gh` authentication; Jira reference resolution remains planned.
 
-Possible future storage may add encryption or OS-backed secret stores. No delivery date or compatibility behavior is promised.
+Values remain application-readable and unencrypted in SQLite. Possible future storage may add encryption or OS-backed secret stores; no compatibility behavior is promised.

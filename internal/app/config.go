@@ -7,10 +7,11 @@ import (
 	"text/tabwriter"
 
 	"github.com/ngochc/dev-dash/internal/configdef"
+	confluenceintegration "github.com/ngochc/dev-dash/internal/integration/confluence"
 	githubintegration "github.com/ngochc/dev-dash/internal/integration/github"
 )
 
-var configDefinitions = configdef.NewRegistry(githubintegration.Definitions...)
+var configDefinitions = configdef.NewRegistry(append(githubintegration.Definitions, confluenceintegration.Definitions...)...)
 
 func runConfig(args []string, output io.Writer) error {
 	if len(args) == 0 {

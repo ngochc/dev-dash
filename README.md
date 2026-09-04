@@ -4,15 +4,16 @@ Devdash is a local developer-context registry and provider-neutral resource grap
 
 ## Status
 
-Implemented: CLI dispatch; workspace lifecycle and configuration; resource, resource-type, relation-type, membership, and secret persistence; SQLite setup and migrations; GitHub repository discovery; derived checkout state; and conservative cloning.
+Implemented: CLI dispatch; workspace lifecycle and configuration; resource, resource-type, relation-type, membership, and secret persistence; SQLite setup and migrations; GitHub repository discovery and conservative cloning; and Confluence Data Center page discovery and generated Markdown materialization.
 
-Alias operations, relation-edge operations, Jira integration, and Confluence integration are not implemented. Their schema or design concepts are documented as planned rather than current behavior.
+Alias operations, relation-edge operations, and Jira integration are not implemented. Confluence Cloud v2, attachments, write-back, stale detection, hierarchy reconstruction, relations, background jobs, and AI features are also excluded.
 
 ## Requirements
 
 - **Release use:** macOS or Linux on amd64 or arm64.
 - **Repository workflows:** `git` for exact checkout inspection and cloning support.
 - **GitHub workflows:** `gh`, installed and authenticated externally.
+- **Confluence workflows:** Data Center REST v1 with a Bearer PAT stored through Devdash secrets.
 - **Interactive selection:** `fzf` is optional; numbered prompts are the fallback.
 - **Source development:** `asdf` with Go `1.26.0` from `.tool-versions`.
 
@@ -41,16 +42,19 @@ go run ./cmd/devdash --help
 
 ## Quick start
 
-Create the default workspace at `~/devdash/mqms`, configure GitHub interactively, check readiness, and inspect discovered repositories:
+Create the default workspace at `~/devdash/mqms`, choose GitHub and/or Confluence during guided setup, check readiness, then inspect cached repositories and wiki pages:
 
 ```bash
 devdash workspace add mqms
 devdash workspace setup mqms
 devdash workspace check mqms
 devdash repo list mqms
+devdash wiki refresh mqms
+devdash wiki list mqms
+devdash wiki fetch mqms 123456
 ```
 
-Repositories clone to `~/devdash/mqms/repos/<repo>` by default. The lower-level alternative to guided setup is:
+Repositories clone to `~/devdash/mqms/repos/<repo>`. Confluence pages materialize as generated Markdown under `~/devdash/mqms/wiki/`. Lower-level configuration is also available:
 
 ```bash
 devdash workspace config set mqms github.org example-org
@@ -58,15 +62,24 @@ devdash repo refresh mqms
 devdash repo clone mqms repo-a repo-b
 ```
 
+```bash
+printf %s 'confluence-pat' | devdash secret set confluence.pat
+devdash workspace config set mqms confluence.base_url https://wiki.example.com/confluence
+devdash workspace config set mqms confluence.space MQMS
+devdash workspace config set mqms confluence.secret secret:confluence.pat
+devdash wiki refresh mqms
+devdash wiki fetch mqms --all
+```
+
 See [Getting Started](docs/getting-started.md) for installation, setup, readiness, and recovery details.
 
 ## Database
 
-Devdash uses SQLite at `DEVDASH_DB` when set, otherwise `~/.devdash/devdash.db`. Opening the database applies embedded migrations automatically. Workspace directories and checkouts remain separate filesystem state. See [Database](docs/database.md).
+Devdash uses SQLite at `DEVDASH_DB` when set, otherwise `~/.devdash/devdash.db`. Opening the database applies embedded migrations automatically. Workspace directories, repository checkouts, and generated wiki files remain separate filesystem state. See [Database](docs/database.md).
 
 ## Architecture
 
-The CLI is thin, application orchestration lives in `internal/app`, provider-neutral services own core behavior, and GitHub, Git, platform, and SQLite code stay behind adapter boundaries. See [Architecture](docs/architecture.md) and [Data Model](docs/data-model.md).
+The CLI is thin, application orchestration lives in `internal/app`, provider-neutral services own core behavior, and provider, platform, Git, and SQLite code stay behind adapter boundaries. See [Architecture](docs/architecture.md) and [Data Model](docs/data-model.md).
 
 ## CLI examples
 
@@ -74,6 +87,8 @@ The CLI is thin, application orchestration lives in `internal/app`, provider-neu
 devdash doctor
 devdash workspace list
 devdash config keys github
+devdash config keys confluence
+devdash wiki list mqms
 devdash secret list
 devdash resource list
 ```
@@ -86,6 +101,7 @@ See the [CLI Reference](docs/cli.md) for every command and argument form.
 - [Architecture](docs/architecture.md)
 - [Data Model](docs/data-model.md)
 - [CLI Reference](docs/cli.md)
+- [Integrations](docs/integrations.md)
 - [Development](docs/development.md)
 
 ## Development

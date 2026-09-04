@@ -24,13 +24,27 @@ func TestRunConfigKeysGitHub(t *testing.T) {
 	}
 }
 
+func TestRunConfigKeysConfluence(t *testing.T) {
+	var output bytes.Buffer
+	if err := run(context.Background(), []string{"config", "keys", "confluence"}, strings.NewReader(""), &output, &bytes.Buffer{}); err != nil {
+		t.Fatalf("run(config keys confluence) error = %v", err)
+	}
+	for _, key := range []string{"confluence.auth_type", "confluence.base_url", "confluence.root_page", "confluence.secret", "confluence.space"} {
+		if !strings.Contains(output.String(), key) {
+			t.Errorf("config keys output = %q, want %s", output.String(), key)
+		}
+	}
+}
+
 func TestRunConfigKeysAll(t *testing.T) {
 	var output bytes.Buffer
 	if err := runConfig([]string{"keys"}, &output); err != nil {
 		t.Fatalf("runConfig(keys) error = %v", err)
 	}
-	if !strings.Contains(output.String(), "github.base_url") || !strings.Contains(output.String(), "github.org") {
-		t.Errorf("config keys output = %q, want GitHub definitions", output.String())
+	for _, key := range []string{"github.base_url", "github.org", "confluence.base_url", "confluence.space"} {
+		if !strings.Contains(output.String(), key) {
+			t.Errorf("config keys output = %q, want %s", output.String(), key)
+		}
 	}
 }
 

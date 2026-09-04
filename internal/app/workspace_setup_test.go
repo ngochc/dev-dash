@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	confluenceintegration "github.com/ngochc/dev-dash/internal/integration/confluence"
 	githubintegration "github.com/ngochc/dev-dash/internal/integration/github"
 	repositorydomain "github.com/ngochc/dev-dash/internal/repository"
+	"github.com/ngochc/dev-dash/internal/secret"
 	"github.com/ngochc/dev-dash/internal/ui/picker"
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
@@ -293,11 +295,154 @@ func TestWorkspaceSetupValidatesArgumentsBeforeDatabaseCreation(t *testing.T) {
 	}
 }
 
+func TestExecuteWorkspaceSetupShowsProviderStatesAndCancelsWithoutChanges(t *testing.T) {
+	dependencies := newSetupDependencies()
+	config := dependencies.config.(*fakeSetupConfig)
+	config.values = map[string]string{"org": "team"}
+	config.confluenceValues = map[string]string{"base_url": "https://wiki.example", "space": "DOC", "secret": "secret:confluence.pat"}
+	dependencies.secrets.(*fakeSetupSecrets).values["confluence.pat"] = "stored-pat"
+	dependencies.picker.(*fakeSetupPicker).providers = [][]string{{}}
+	var output bytes.Buffer
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
+		t.Fatalf("executeWorkspaceSetup() error = %v", err)
+	}
+	pickerFake := dependencies.picker.(*fakeSetupPicker)
+	if pickerFake.providerCalls != 1 || len(pickerFake.providerOptions) != 1 {
+		t.Fatalf("provider calls/options = %d/%#v", pickerFake.providerCalls, pickerFake.providerOptions)
+	}
+	want := []picker.Option{{Value: "github", Label: "GitHub      configured"}, {Value: "confluence", Label: "Confluence  configured"}}
+	if !reflect.DeepEqual(pickerFake.providerOptions[0], want) {
+		t.Fatalf("provider options = %#v, want %#v", pickerFake.providerOptions[0], want)
+	}
+	if len(config.setValues) != 0 || dependencies.github.(*fakeSetupGitHub).validateCalls != 0 || dependencies.confluence.(*fakeSetupConfluence).validateCalls != 0 {
+		t.Fatal("cancelled provider selection changed configuration")
+	}
+	if !strings.Contains(output.String(), "Workspace setup cancelled.") {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
+func TestExecuteWorkspaceSetupConfiguresConfluenceWithNewPATAndRoot(t *testing.T) {
+	dependencies := newSetupDependencies()
+	pickerFake := dependencies.picker.(*fakeSetupPicker)
+	pickerFake.providers = [][]string{{"confluence"}}
+	pickerFake.inputs = []string{"bad URL", "https://Wiki.Example.com/confluence///", "", "DOC", "bad", "123"}
+	pickerFake.secrets = []string{"new-private-pat"}
+	pickerFake.confirms = []bool{true}
+	var output, feedback bytes.Buffer
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &feedback, dependencies); err != nil {
+		t.Fatalf("executeWorkspaceSetup() error = %v", err)
+	}
+	client := dependencies.confluence.(*fakeSetupConfluence)
+	if client.validateCalls != 1 || client.pat != "new-private-pat" || client.validated.BaseURL != "https://Wiki.Example.com/confluence" || client.validated.Space != "DOC" || client.validated.RootPage != "123" {
+		t.Fatalf("validated = %#v PAT=%q calls=%d", client.validated, client.pat, client.validateCalls)
+	}
+	secrets := dependencies.secrets.(*fakeSetupSecrets)
+	if secrets.sets["confluence.pat"] != "new-private-pat" {
+		t.Fatalf("stored secrets = %#v", secrets.sets)
+	}
+	config := dependencies.config.(*fakeSetupConfig)
+	for key, value := range map[string]string{
+		confluenceintegration.BaseURLKey:  "https://Wiki.Example.com/confluence",
+		confluenceintegration.SpaceKey:    "DOC",
+		confluenceintegration.SecretKey:   "secret:confluence.pat",
+		confluenceintegration.RootPageKey: "123",
+	} {
+		if config.setValues[key] != value {
+			t.Errorf("config %s = %q, want %q", key, config.setValues[key], value)
+		}
+	}
+	for _, text := range []string{"Invalid Confluence configuration", "Expected a decimal page ID.", "Confluence checks:", "URL: OK", "Auth: PAT", "Secret: configured", "Root: 123", "Status: ready", "devdash wiki refresh workspace"} {
+		if !strings.Contains(output.String(), text) {
+			t.Errorf("output = %q, want %q", output.String(), text)
+		}
+	}
+	if strings.Contains(output.String(), "new-private-pat") || !strings.Contains(feedback.String(), "Checking Confluence") {
+		t.Fatalf("output/feedback leaked or missed progress: %q / %q", output.String(), feedback.String())
+	}
+}
+
+func TestExecuteWorkspaceSetupReusesExistingConfluencePATAndClearsDefaults(t *testing.T) {
+	dependencies := newSetupDependencies()
+	config := dependencies.config.(*fakeSetupConfig)
+	config.confluenceValues = map[string]string{
+		"base_url":  "https://wiki.example/confluence",
+		"space":     "DOC",
+		"secret":    "secret:team.pat",
+		"auth_type": "pat",
+		"root_page": "123",
+	}
+	dependencies.secrets.(*fakeSetupSecrets).values["team.pat"] = "existing-pat"
+	pickerFake := dependencies.picker.(*fakeSetupPicker)
+	pickerFake.providers = [][]string{{"confluence"}}
+	pickerFake.confirms = []bool{true, false}
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies); err != nil {
+		t.Fatalf("executeWorkspaceSetup() error = %v", err)
+	}
+	client := dependencies.confluence.(*fakeSetupConfluence)
+	if client.pat != "existing-pat" || client.validated.RootPage != "" || len(pickerFake.secretPrompts) != 0 {
+		t.Fatalf("reuse = PAT %q config %#v secret prompts %v", client.pat, client.validated, pickerFake.secretPrompts)
+	}
+	wantUnset := []string{confluenceintegration.AuthTypeKey, confluenceintegration.RootPageKey}
+	if !reflect.DeepEqual(config.unsetValues, wantUnset) {
+		t.Fatalf("unset values = %v, want %v", config.unsetValues, wantUnset)
+	}
+}
+
+func TestExecuteWorkspaceSetupConfluenceValidationFailurePersistsNothing(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "authentication", err: confluenceintegration.ErrAuthentication, want: "Confluence authentication failed for https://wiki.example."},
+		{name: "forbidden", err: confluenceintegration.ErrForbidden, want: "Confluence authentication failed for https://wiki.example."},
+		{name: "space", err: confluenceintegration.ErrSpaceNotFound, want: `Confluence space "DOC" was not found or is not accessible.`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dependencies := newSetupDependencies()
+			dependencies.confluence.(*fakeSetupConfluence).validateErr = test.err
+			pickerFake := dependencies.picker.(*fakeSetupPicker)
+			pickerFake.providers = [][]string{{"confluence"}}
+			pickerFake.inputs = []string{"https://wiki.example", "DOC"}
+			pickerFake.secrets = []string{"candidate-pat"}
+			err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
+			if !errors.Is(err, test.err) || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("executeWorkspaceSetup() error = %v, want %q preserving %v", err, test.want, test.err)
+			}
+			if len(dependencies.config.(*fakeSetupConfig).setValues) != 0 || len(dependencies.secrets.(*fakeSetupSecrets).sets) != 0 {
+				t.Fatal("failed validation persisted configuration or PAT")
+			}
+		})
+	}
+}
+
+func TestExecuteWorkspaceSetupProcessesProvidersInFixedOrder(t *testing.T) {
+	dependencies := newSetupDependencies()
+	dependencies.github.(*fakeSetupGitHub).owners = []githubintegration.Owner{{Login: "team"}}
+	pickerFake := dependencies.picker.(*fakeSetupPicker)
+	pickerFake.providers = [][]string{{"confluence", "github"}}
+	pickerFake.one = []string{"github.com", "team"}
+	pickerFake.inputs = []string{"https://wiki.example", "DOC"}
+	pickerFake.secrets = []string{"pat"}
+	var order []string
+	dependencies.github.(*fakeSetupGitHub).beforeValidate = func() { order = append(order, "github") }
+	dependencies.confluence.(*fakeSetupConfluence).beforeValidate = func() { order = append(order, "confluence") }
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies); err != nil {
+		t.Fatalf("executeWorkspaceSetup() error = %v", err)
+	}
+	if !reflect.DeepEqual(order, []string{"github", "confluence"}) {
+		t.Fatalf("validation order = %v", order)
+	}
+}
+
 func newSetupDependencies() workspaceSetupDependencies {
 	return workspaceSetupDependencies{
 		workspaces:   &fakeSetupWorkspace{item: workspace.Workspace{ID: "workspace-id", Name: "workspace", LocalPath: "/work/workspace"}},
 		config:       &fakeSetupConfig{setValues: make(map[string]string)},
 		github:       &fakeSetupGitHub{},
+		confluence:   &fakeSetupConfluence{},
+		secrets:      &fakeSetupSecrets{values: make(map[string]string)},
 		repositories: &fakeSetupRepositories{},
 		picker:       &fakeSetupPicker{},
 	}
@@ -313,13 +458,19 @@ func (f *fakeSetupWorkspace) Get(context.Context, string) (workspace.Workspace, 
 }
 
 type fakeSetupConfig struct {
-	values    map[string]string
-	setValues map[string]string
+	values           map[string]string
+	confluenceValues map[string]string
+	setValues        map[string]string
+	unsetValues      []string
 }
 
-func (f *fakeSetupConfig) Namespace(context.Context, string, string) (map[string]string, error) {
-	values := make(map[string]string, len(f.values))
-	for key, value := range f.values {
+func (f *fakeSetupConfig) Namespace(_ context.Context, _ string, namespace string) (map[string]string, error) {
+	source := f.values
+	if namespace == "confluence" {
+		source = f.confluenceValues
+	}
+	values := make(map[string]string, len(source))
+	for key, value := range source {
 		values[key] = value
 	}
 	return values, nil
@@ -327,6 +478,11 @@ func (f *fakeSetupConfig) Namespace(context.Context, string, string) (map[string
 
 func (f *fakeSetupConfig) SetUser(_ context.Context, _ string, key, value string) (workspace.Workspace, error) {
 	f.setValues[key] = value
+	return workspace.Workspace{}, nil
+}
+
+func (f *fakeSetupConfig) UnsetUser(_ context.Context, _ string, key string) (workspace.Workspace, error) {
+	f.unsetValues = append(f.unsetValues, key)
 	return workspace.Workspace{}, nil
 }
 
@@ -356,6 +512,49 @@ func (f *fakeSetupGitHub) DiscoverOwners(context.Context, githubintegration.Conf
 	}
 	f.discoverCalls++
 	return append([]githubintegration.Owner(nil), f.owners...), f.ownerErr
+}
+
+type fakeSetupConfluence struct {
+	validated      confluenceintegration.Config
+	pat            string
+	validateErr    error
+	validateCalls  int
+	beforeValidate func()
+}
+
+func (f *fakeSetupConfluence) Validate(_ context.Context, config confluenceintegration.Config, pat string) error {
+	if f.beforeValidate != nil {
+		f.beforeValidate()
+	}
+	f.validateCalls++
+	f.validated = config
+	f.pat = pat
+	return f.validateErr
+}
+
+type fakeSetupSecrets struct {
+	values map[string]string
+	sets   map[string]string
+	err    error
+}
+
+func (f *fakeSetupSecrets) Get(_ context.Context, key string) (secret.Secret, error) {
+	if f.err != nil {
+		return secret.Secret{}, f.err
+	}
+	value, exists := f.values[key]
+	if !exists {
+		return secret.Secret{}, secret.ErrNotFound
+	}
+	return secret.Secret{Key: key, Value: value}, nil
+}
+
+func (f *fakeSetupSecrets) Set(_ context.Context, key, value string) error {
+	if f.sets == nil {
+		f.sets = make(map[string]string)
+	}
+	f.sets[key] = value
+	return nil
 }
 
 type fakeSetupRepositories struct {
@@ -398,18 +597,29 @@ func (f *fakeSetupRepositories) CloneKnown(_ context.Context, _ string, selector
 }
 
 type fakeSetupPicker struct {
-	one         []string
-	oneErrors   []error
-	many        [][]string
-	manyErrors  []error
-	confirms    []bool
-	confirmErrs []error
-	inputs      []string
-	inputErrors []error
-	oneOptions  [][]picker.Option
-	oneDefaults []string
-	manyOptions [][]picker.Option
-	manyCalls   int
+	one             []string
+	oneErrors       []error
+	many            [][]string
+	manyErrors      []error
+	providers       [][]string
+	providerErrors  []error
+	confirms        []bool
+	confirmErrs     []error
+	inputs          []string
+	inputErrors     []error
+	secrets         []string
+	secretErrors    []error
+	confirmPrompts  []string
+	confirmDefaults []bool
+	inputPrompts    []string
+	inputDefaults   []string
+	secretPrompts   []string
+	oneOptions      [][]picker.Option
+	oneDefaults     []string
+	manyOptions     [][]picker.Option
+	providerOptions [][]picker.Option
+	manyCalls       int
+	providerCalls   int
 }
 
 func (f *fakeSetupPicker) PickOne(_ context.Context, _ string, options []picker.Option, defaultValue string) (string, error) {
@@ -426,7 +636,20 @@ func (f *fakeSetupPicker) PickOne(_ context.Context, _ string, options []picker.
 	return value, err
 }
 
-func (f *fakeSetupPicker) PickMany(_ context.Context, _ string, options []picker.Option) ([]string, error) {
+func (f *fakeSetupPicker) PickMany(_ context.Context, title string, options []picker.Option) ([]string, error) {
+	if title == "Integrations" {
+		f.providerCalls++
+		f.providerOptions = append(f.providerOptions, append([]picker.Option(nil), options...))
+		values := []string{"github"}
+		if len(f.providers) > 0 {
+			values, f.providers = f.providers[0], f.providers[1:]
+		}
+		var err error
+		if len(f.providerErrors) > 0 {
+			err, f.providerErrors = f.providerErrors[0], f.providerErrors[1:]
+		}
+		return append([]string(nil), values...), err
+	}
 	f.manyCalls++
 	f.manyOptions = append(f.manyOptions, append([]picker.Option(nil), options...))
 	var values []string
@@ -440,10 +663,14 @@ func (f *fakeSetupPicker) PickMany(_ context.Context, _ string, options []picker
 	return append([]string(nil), values...), err
 }
 
-func (f *fakeSetupPicker) Confirm(string, bool) (bool, error) {
+func (f *fakeSetupPicker) Confirm(prompt string, defaultValue bool) (bool, error) {
+	f.confirmPrompts = append(f.confirmPrompts, prompt)
+	f.confirmDefaults = append(f.confirmDefaults, defaultValue)
 	var value bool
 	if len(f.confirms) > 0 {
 		value, f.confirms = f.confirms[0], f.confirms[1:]
+	} else {
+		value = defaultValue
 	}
 	var err error
 	if len(f.confirmErrs) > 0 {
@@ -452,14 +679,29 @@ func (f *fakeSetupPicker) Confirm(string, bool) (bool, error) {
 	return value, err
 }
 
-func (f *fakeSetupPicker) Input(string, string) (string, error) {
-	var value string
+func (f *fakeSetupPicker) Input(prompt, defaultValue string) (string, error) {
+	f.inputPrompts = append(f.inputPrompts, prompt)
+	f.inputDefaults = append(f.inputDefaults, defaultValue)
+	value := defaultValue
 	if len(f.inputs) > 0 {
 		value, f.inputs = f.inputs[0], f.inputs[1:]
 	}
 	var err error
 	if len(f.inputErrors) > 0 {
 		err, f.inputErrors = f.inputErrors[0], f.inputErrors[1:]
+	}
+	return value, err
+}
+
+func (f *fakeSetupPicker) Secret(prompt string) (string, error) {
+	f.secretPrompts = append(f.secretPrompts, prompt)
+	var value string
+	if len(f.secrets) > 0 {
+		value, f.secrets = f.secrets[0], f.secrets[1:]
+	}
+	var err error
+	if len(f.secretErrors) > 0 {
+		err, f.secretErrors = f.secretErrors[0], f.secretErrors[1:]
 	}
 	return value, err
 }

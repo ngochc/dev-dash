@@ -1,6 +1,6 @@
 # GitHub Integration
 
-GitHub is the only implemented remote provider. It uses the installed GitHub CLI rather than embedding an OAuth or API transport.
+GitHub is an implemented remote provider alongside Confluence. It uses the installed GitHub CLI rather than embedding an OAuth or API transport.
 
 ## Configuration
 
@@ -41,8 +41,8 @@ If `gh` is missing, install it from <https://cli.github.com/> and rerun setup. I
 
 ## Command behavior
 
-- `workspace setup` interactively selects and stores the host and owner, refreshes repositories, then optionally clones selected repositories.
-- `workspace check` resolves configuration, validates the workspace root, `gh`, authentication, and cached checkout inspection without changing configuration or refreshing discovery.
+- `workspace setup` first selects providers; when GitHub is selected it configures the host and owner, refreshes repositories, then optionally clones a selected set.
+- `workspace check` treats an empty GitHub namespace as not configured. When active, it validates configuration, the workspace root, `gh`, authentication, and cached checkout inspection without refreshing discovery.
 - `repo refresh` validates effective configuration and authentication, discovers repositories, and additively upserts the cached resource snapshot.
 - `repo list` reads cached repositories and derives checkout state through targeted `git` inspection; it does not call GitHub or refresh.
 - `repo clone` performs a refresh before selector resolution, then clones, adopts, restores, or refuses each selected destination conservatively.
@@ -54,7 +54,7 @@ See [Repositories](../repositories.md) for resource mapping, selectors, states, 
 
 Setup performs these steps:
 
-1. Resolve and print the workspace.
+1. Resolve and print the workspace, then select providers to configure in this run.
 2. Keep or select a GitHub host; blank Enter uses `github.com` when selection is required.
 3. Save the selected host, then validate `gh` availability and authentication.
 4. Discover the personal login and organizations; keep, select, or enter an owner. Blank Enter uses the authenticated personal login when one is available.
@@ -66,10 +66,10 @@ Host selection may therefore be persisted before a later owner cancellation or f
 
 ## Readiness status
 
-`workspace check` reports:
+`workspace check` reports GitHub as `not configured` when its namespace has no stored rows; that optional state performs no GitHub call. For an active namespace:
 
-- `ready`: all checked requirements pass; exit zero.
-- `incomplete`: `github.org` is missing; this takes precedence over degradation and exits nonzero.
-- `degraded`: bad workspace root, invalid base URL, unavailable `gh`, failed authentication, or repository inspection errors; exits nonzero.
+- `ready`: all checked requirements pass;
+- `incomplete`: `github.org` is missing; this takes precedence over degradation;
+- `degraded`: invalid base URL, unavailable `gh`, failed authentication, or repository inspection errors.
 
 Cached `missing` and `invalid` repository counts alone are informational and do not make readiness degraded.

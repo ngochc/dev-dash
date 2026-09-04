@@ -28,18 +28,19 @@ github.org=example-org
 
 `github.base_url` is optional and defaults to the shown value. `github.org` is required by GitHub operations. See [GitHub Integration](integrations/github.md).
 
-### Planned integration examples
-
-Generic configuration storage accepts these strings today:
+Current Confluence definitions are:
 
 ```text
-jira.base_url=https://jira.example.com
-jira.project=MQMS
-confluence.base_url=https://wiki.example.com
+confluence.base_url=https://wiki.example.com/confluence
 confluence.space=MQMS
+confluence.secret=secret:confluence.pat
+confluence.auth_type=pat
+confluence.root_page=123456
 ```
 
-Jira and Confluence are planned. No current adapter defines, validates, or consumes these values. Generic storage also does not automatically resolve `jira.secret` or `confluence.secret`; see [Secrets](secrets.md).
+Base URL, space, and secret reference are required. Authentication defaults to `pat` in memory and accepts no other value. Root page is optional. Definitions do not seed rows; the default auth type is not persisted unless a user writes it. Runtime resolution normalizes the Data Center base URL, preserves a context path, validates the decimal root page ID, and resolves only a `secret:<key>` reference. See [Confluence Integration](integrations/confluence.md).
+
+Jira keys remain open-ended generic configuration only. Jira behavior is planned; no Jira adapter currently validates or consumes those values.
 
 ## Commands
 
@@ -48,6 +49,7 @@ Definition discovery:
 ```text
 devdash config keys
 devdash config keys github
+devdash config keys confluence
 ```
 
 Workspace value operations:
@@ -68,6 +70,10 @@ devdash workspace config get mqms github.org
 devdash workspace config list mqms
 devdash workspace config unset mqms github.base_url
 EDITOR="code --wait" devdash workspace config edit mqms
+printf %s 'confluence-pat' | devdash secret set confluence.pat
+devdash workspace config set mqms confluence.base_url https://wiki.example.com/confluence
+devdash workspace config set mqms confluence.space MQMS
+devdash workspace config set mqms confluence.secret secret:confluence.pat
 ```
 
 `workspace config get` prints the raw stored value. `config keys` is discovery, not an allowlist for generic set/edit. Edit reads `key=value` lines through `$VISUAL`, then `$EDITOR`; blank lines and lines beginning with `#` are ignored. Replacement is transactional, so validation or persistence failure leaves prior values intact.
@@ -105,4 +111,4 @@ User set, unset, and edit operations reject reserved keys. Normal list and edit 
 
 Illustrative reserved names are `_repo.last_refresh`, `_github.last_refresh`, and `_wiki.last_fetch`. They are conventions only; the current runtime does not persist those refresh markers.
 
-User-operational keys remain editable even when their integrations are future work. Examples include `github.org`, `jira.project`, `jira.secret`, and `confluence.secret`.
+User-operational keys remain editable. Implemented examples include `github.org` and `confluence.secret`; planned namespaces such as `jira.project` remain generic stored strings.

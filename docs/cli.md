@@ -21,8 +21,8 @@ This page lists every command in `devdash --help`. Command errors and unknown su
 | `devdash workspace list` | Lists workspaces ordered by name. |
 | `devdash workspace add <name> [path]` | Adds an existing explicit directory or creates `~/devdash/<name>` when path is omitted. |
 | `devdash workspace show <name-or-id>` | Prints ID, name, and path, resolving exact ID before exact name. |
-| `devdash workspace setup <workspace>` | Guides GitHub host/owner configuration, refreshes repositories, and optionally clones a selected set. |
-| `devdash workspace check <workspace>` | Reports non-mutating workspace, GitHub, authentication, and cached checkout readiness. |
+| `devdash workspace setup <workspace>` | Selects GitHub and/or Confluence, then guides the selected provider configuration. |
+| `devdash workspace check <workspace>` | Reports non-mutating workspace, per-provider, cached repository, and cached wiki readiness. |
 | `devdash workspace remove <name-or-id>` | Removes registry state, not the filesystem directory. |
 
 ## Workspace configuration
@@ -60,6 +60,17 @@ This page lists every command in `devdash --help`. Command errors and unknown su
 | `devdash repo pick <workspace>` | Refreshes once, interactively selects repositories, and clones the selected set. |
 | `devdash repo clone <workspace> --all` | Refreshes, then processes every known repository conservatively. |
 | `devdash repo clone <workspace> <repo> [<repo>...]` | Refreshes, resolves exact owner/name or unique short-name selectors, and processes each repository. |
+
+## Wiki pages
+
+| Command | Observable behavior |
+| --- | --- |
+| `devdash wiki refresh <workspace>` | Validates Confluence Data Center configuration and PAT, then additively refreshes page metadata without bodies. |
+| `devdash wiki list <workspace>` | Offline list of cached pages with `not-fetched`, `fetched`, or `missing` state derived from tracked paths. |
+| `devdash wiki fetch <workspace> --all` | Refreshes metadata, then fetches and materializes every discovered page. |
+| `devdash wiki fetch <workspace> <page> [<page>...]` | Refreshes metadata, resolves exact page IDs or unique exact titles, and materializes selections in selector order. |
+
+Fetch output includes each page result before any aggregate failure is returned. `--all` must be the sole selector.
 
 ## Resource types
 

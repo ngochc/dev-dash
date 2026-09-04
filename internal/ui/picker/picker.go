@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type Picker interface {
 	PickMany(context.Context, string, []Option) ([]string, error)
 	Confirm(string, bool) (bool, error)
 	Input(string, string) (string, error)
+	Secret(string) (string, error)
 }
 
 type terminalPicker struct {
@@ -288,6 +290,34 @@ func (p *terminalPicker) Input(prompt, defaultValue string) (string, error) {
 		return defaultValue, nil
 	}
 	return line, nil
+}
+
+func (p *terminalPicker) Secret(prompt string) (string, error) {
+	fmt.Fprintf(p.output, "%s ", prompt)
+	if file, ok := p.input.(*os.File); ok && p.isTerminal(int(file.Fd())) {
+		value, err := term.ReadPassword(int(file.Fd()))
+		if err != nil {
+			return "", fmt.Errorf("read secret input: %w", err)
+		}
+		fmt.Fprintln(p.output)
+		return string(value), nil
+	}
+	value, err := p.readSecretLine()
+	if err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func (p *terminalPicker) readSecretLine() (string, error) {
+	line, err := p.reader.ReadString('\n')
+	if err != nil && !(errors.Is(err, io.EOF) && len(line) > 0) {
+		if errors.Is(err, io.EOF) {
+			return "", ErrCancelled
+		}
+		return "", fmt.Errorf("read secret input: %w", err)
+	}
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), nil
 }
 
 func (p *terminalPicker) readLine() (string, error) {

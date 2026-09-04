@@ -4,7 +4,7 @@ SQLite stores a provider-neutral resource graph. Schema support and application 
 
 ## Capability status
 
-Implemented persistence covers workspaces, workspace configuration, resource types, relation types, resources, workspace membership, secrets, and the GitHub repository mapping into integrations, resources, memberships, and checkout locations.
+Implemented persistence covers workspaces, workspace configuration, resource types, relation types, resources, workspace membership, secrets, GitHub repository mapping, and Confluence page mapping into generic integrations, resources, memberships, and locations.
 
 Schema-only behavior currently includes alias operations and resolution, relation rows and traversal, tags and resource tags, arbitrary resource-location CRUD, and general integration CRUD. `secrets` is implemented by migration `00003_add_secrets.sql`; workspace configuration is added by `00004_add_workspace_config.sql`.
 
@@ -30,7 +30,7 @@ Schema-only behavior currently includes alias operations and resolution, relatio
 
 - **Purpose:** configured provider instances used to identify provider-backed resources.
 - **Load-bearing columns:** opaque `id`, `provider`, `name`, `base_url`, credential reference, JSON config, enabled flag, timestamps.
-- **Owner/scope:** provider instance; general CRUD is schema-only, while GitHub repository refresh upserts one.
+- **Owner/scope:** provider instance; general CRUD is schema-only. GitHub refresh keys instances by host, while Confluence keys them by normalized full base URL so Data Center context paths remain distinct.
 - **Foreign keys/delete behavior:** deleting an integration sets referencing `resources.integration_id` to `NULL`.
 - **Uniqueness:** `(provider, name)`.
 
@@ -62,7 +62,7 @@ Schema-only behavior currently includes alias operations and resolution, relatio
 
 - **Purpose:** physical instances separate from logical resource identity.
 - **Load-bearing columns:** opaque `id`, `resource_id`, optional `workspace_id`, `location_type`, `path`, JSON metadata, timestamps.
-- **Owner/scope:** always one resource; optionally one workspace. Repository checkouts use `location_type = 'local_checkout'`.
+- **Owner/scope:** always one resource; optionally one workspace. Repository checkouts use `location_type = 'local_checkout'`; generated Confluence Markdown uses `location_type = 'materialized_file'`.
 - **Foreign keys/delete behavior:** deleting the resource or optional owning workspace cascades the row.
 - **Uniqueness:** `(location_type, path)` is globally unique, not merely workspace-local.
 
@@ -145,6 +145,8 @@ Only schema-backed relationships appear here. The diagram does not imply that ev
 `resources.id` is the logical identity used by provider-neutral services. `provider_id` retains stable provider identity when available, while `external_key` retains its human-readable provider name. The two must not be substituted for the opaque resource ID.
 
 `workspace_resources` separates membership from identity, so the same resource can belong to multiple workspaces. `resource_locations` separates physical instances such as checkouts from the logical resource.
+
+Confluence pages use resource type `confluence_page`, provider ID equal to the decimal page ID, external key `<space>/<page-id>`, current title and source URL, and optional `confluence_updated_at` metadata. No provider-specific page table or migration is required. Metadata refresh is additive; workspace membership does not own or duplicate the logical page.
 
 Alias scope is enforced by partial unique indexes: names are unique within their workspace or the global scope, and only one primary alias exists per resource and scope. Alias resolution is not implemented.
 

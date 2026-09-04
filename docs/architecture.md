@@ -2,22 +2,22 @@
 
 ## Current system
 
-Devdash is a local Go CLI backed by SQLite. The current executable dispatches commands in `cmd/devdash` and composes behavior in `internal/app`. Implemented services cover workspaces, workspace configuration, resources and memberships, resource and relation type registries, secrets, and GitHub-backed repository discovery and cloning.
+Devdash is a local Go CLI backed by SQLite. The executable dispatches commands in `cmd/devdash` and composes behavior in `internal/app`. Implemented services cover workspaces, configuration, generic resources and locations, type registries, secrets, GitHub repositories, and Confluence Data Center wiki pages.
 
-Alias operations and relation-edge CRUD or traversal are not exposed. Jira and Confluence integration directories are placeholders only.
+Alias operations and relation-edge CRUD or traversal are not exposed. Jira provider behavior remains planned.
 
 ## Core concepts
 
 | Concept | Meaning | Current support |
 | --- | --- | --- |
-| Workspace | Named local project context with an opaque ID and local root. | CRUD, configuration, resource membership, GitHub setup/check |
-| Resource | Provider-neutral logical identity for anything in project context. | CRUD and GitHub repository mapping |
+| Workspace | Named local project context with an opaque ID and local root. | CRUD, configuration, resource membership, provider setup/check |
+| Resource | Provider-neutral logical identity for anything in project context. | CRUD, GitHub repository mapping, Confluence page mapping |
 | Resource Type | Registered vocabulary for resource kinds. | List, show, register |
-| Resource Location | Physical instance of a resource, optionally owned by a workspace. | Repository checkout registration; arbitrary CRUD is schema-only |
+| Resource Location | Physical instance of a resource, optionally owned by a workspace. | Repository checkout and generated wiki-file registration; arbitrary CRUD is schema-only |
 | Alias | Human-facing resource name, global or workspace-scoped. | Schema/design concept; operations are not implemented |
 | Relation | Directed typed edge between two resources. | Schema/design concept; edge operations and traversal are not implemented |
 | Relation Type | Registered relation vocabulary, including inverse metadata and symmetry. | List, show, register |
-| Integration | Configured provider instance associated with provider-backed resources. | GitHub repository mapping; general integration CRUD is not exposed |
+| Integration | Configured provider instance associated with provider-backed resources. | GitHub and Confluence mapping; general integration CRUD is not exposed |
 | Workspace Config | Namespaced string values owned by a workspace. | List, get, set, unset, edit, and integration resolution |
 | Secret | Named sensitive value stored in SQLite. | Set, get, masked show, list, delete |
 
@@ -34,6 +34,8 @@ flowchart LR
     App --> GitHub[internal/integration/github]
     GitHub --> GH[gh CLI]
     GH --> Remote[GitHub.com or GHES]
+    App --> Confluence[internal/integration/confluence]
+    Confluence --> REST[Data Center REST v1]
     App --> GitInspect[internal/integration/git]
     GitInspect --> Git[git CLI]
     WorkspaceService[internal/workspace.Service] --> ResolvePath[internal/platform.ResolveWorkspaceDirectory]
@@ -57,11 +59,11 @@ Dependencies are passed explicitly. SQLite is an adapter, not the domain model. 
 
 ## Provider boundaries
 
-GitHub is the only implemented provider workflow. It resolves effective workspace configuration, runs `gh` for authentication, owner and repository discovery, and cloning, then maps results into provider-neutral resources. GitHub Enterprise receives process-local command configuration rather than global `gh` changes.
+GitHub resolves its workspace namespace and runs `gh` for authentication, owner and repository discovery, and cloning. GitHub Enterprise receives process-local command configuration rather than global `gh` changes.
 
-Local checkout validation executes targeted `git` commands against registered paths or exact clone destinations. Devdash does not discover repositories by scanning workspace directories.
+Confluence resolves its independent namespace and secret reference, then uses Data Center REST v1 with Bearer PAT authentication. Discovery reads metadata only. Selected page bodies are converted from storage XHTML to generated Markdown through the provider-neutral wiki and filesystem boundaries.
 
-Provider clients belong under `internal/integration/<provider>`. Provider-neutral orchestration and models remain outside those adapters.
+Local checkout and wiki state are derived only from registered exact paths. Devdash does not scan workspace directories to adopt repositories or Markdown. Provider clients belong under `internal/integration/<provider>`; provider-neutral orchestration and models remain outside those adapters.
 
 ## Persistence boundary
 
@@ -71,13 +73,14 @@ The universal identity is `resources.id`. Workspace membership and physical loca
 
 ## Current and planned capabilities
 
-**Current:** workspace lifecycle and configuration; resource, resource-type, relation-type, membership, and secret persistence; GitHub configuration, discovery, repository mapping, state inspection, and conservative clone behavior.
+**Current:** workspace lifecycle and configuration; resource, resource-type, relation-type, membership, location, and secret persistence; GitHub repository configuration/discovery/cloning; Confluence Data Center page configuration/discovery/materialization; provider-isolated readiness checks.
 
-**Planned:** alias registration and deterministic resolution; relation-edge CRUD and traversal; Jira and Confluence provider behavior; tags and general location/integration operations. Schema presence does not imply service or CLI support.
+**Planned:** alias registration and deterministic resolution; relation-edge CRUD and traversal; Jira provider behavior; tags and general location/integration operations. Confluence Cloud v2, attachments, write-back, stale detection, and hierarchy reconstruction are not implemented.
 
 ## Related documentation
 
 - [Data Model](data-model.md)
+- [Confluence Integration](integrations/confluence.md)
 - [Database](database.md)
 - [Extension Guide](extension-guide.md)
 - [Roadmap](roadmap.md)

@@ -41,22 +41,16 @@ Removal cascades workspace-owned database rows such as configuration, membership
 
 ```text
 ~/devdash/mqms/
-└── repos/
-```
-
-Repositories materialize under `<workspace.local_path>/repos/<repo>`. The `repos/` directory is created on demand during cloning, not by `workspace add`.
-
-## Planned layout
-
-```text
-~/devdash/mqms/
 ├── repos/
-├── wiki/
-└── artifacts/
+└── wiki/
 ```
 
-`wiki/` and `artifacts/` materialization are planned. Those directories and behaviors are not implemented.
+Repositories materialize under `<workspace.local_path>/repos/<repo>`. The `repos/` directory is created on demand during cloning.
+
+Confluence pages materialize under `<workspace.local_path>/wiki/<slug>-<page-id>.md`. The `wiki/` directory is created only by fetch. It must be a real directory, not a symlink. Generated files are flat; Devdash does not recreate Confluence hierarchy.
+
+An `artifacts/` materialization area remains planned and is not implemented.
 
 ## Ownership
 
-`workspace_config` rows belong to one workspace. `workspace_resources` records membership, but a resource remains an independent logical identity and may belong to multiple workspaces. Repository checkout locations may also carry workspace ownership.
+`workspace_config` rows belong to one workspace. `workspace_resources` records membership, but a resource remains an independent logical identity and may belong to multiple workspaces. Repository checkout and generated wiki-file locations carry workspace ownership.

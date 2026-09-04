@@ -120,6 +120,10 @@ func TestHelpListsGuidedWorkspaceCommands(t *testing.T) {
 		"devdash workspace setup <workspace>",
 		"devdash workspace check <workspace>",
 		"devdash repo pick <workspace>",
+		"devdash wiki refresh <workspace>",
+		"devdash wiki list <workspace>",
+		"devdash wiki fetch <workspace> --all",
+		"devdash wiki fetch <workspace> <page> [<page>...]",
 	} {
 		if !strings.Contains(output.String(), command) {
 			t.Errorf("help output = %q, want containing %q", output.String(), command)

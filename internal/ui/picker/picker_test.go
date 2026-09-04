@@ -394,6 +394,25 @@ func TestSequentialPromptsShareBufferedInput(t *testing.T) {
 	}
 }
 
+func TestSecretReadsOneBufferedLineWithoutEcho(t *testing.T) {
+	var output bytes.Buffer
+	picker := New(strings.NewReader("raw PAT value\nnext value\n"), &output)
+	value, err := picker.Secret("PAT:")
+	if err != nil {
+		t.Fatalf("Secret() error = %v", err)
+	}
+	next, err := picker.Input("Next:", "")
+	if err != nil {
+		t.Fatalf("Input() error = %v", err)
+	}
+	if value != "raw PAT value" || next != "next value" {
+		t.Fatalf("values = %q/%q", value, next)
+	}
+	if strings.Contains(output.String(), value) || output.String() != "PAT: Next: (Enter to continue) " {
+		t.Fatalf("output = %q", output.String())
+	}
+}
+
 func fzfPicker(t *testing.T) *terminalPicker {
 	t.Helper()
 	picker := newTerminalPicker(&descriptorReader{Reader: strings.NewReader("")}, &descriptorWriter{})
