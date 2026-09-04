@@ -22,7 +22,7 @@ Interactive input is preferred:
 devdash secret set jira.token
 ```
 
-When standard input is a terminal, Devdash prompts with `Secret:` and reads without echo. When standard input is not a terminal, it reads every byte until EOF:
+When standard input is a terminal, Devdash prompts with `Secret (input hidden; Enter to submit):` and reads without echo. When standard input is not a terminal, it reads every byte until EOF:
 
 ```bash
 printf %s 'token' | devdash secret set jira.token

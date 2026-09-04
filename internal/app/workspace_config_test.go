@@ -146,12 +146,12 @@ func TestRunWorkspaceConfigEditReplacesCompleteSet(t *testing.T) {
 	runAppCommand(t, ctx, "workspace", "config", "set", "devdash", "github.org", "old-org")
 
 	input := strings.NewReader("editor input")
-	var output bytes.Buffer
+	var output, feedback bytes.Buffer
 	editorCalls := 0
 	editor := func(gotCtx context.Context, initial []byte, gotInput io.Reader, gotOutput io.Writer) ([]byte, error) {
 		editorCalls++
-		if gotCtx != ctx || gotInput != input || gotOutput != &output {
-			t.Error("editor did not receive command context and streams")
+		if gotCtx != ctx || gotInput != input || gotOutput != &feedback {
+			t.Error("editor did not receive command context, input, and feedback stream")
 		}
 		wantInitial := "github.base_url=https://old.example\ngithub.org=old-org\n"
 		if string(initial) != wantInitial {
@@ -159,7 +159,7 @@ func TestRunWorkspaceConfigEditReplacesCompleteSet(t *testing.T) {
 		}
 		return []byte("# replacement\ngithub.org=new-org\nconfluence.space=MQMS\nsome.query=a=b=c\n"), nil
 	}
-	if err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, input, &output, editor); err != nil {
+	if err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, input, &output, &feedback, editor); err != nil {
 		t.Fatalf("runWorkspaceConfigWithEditor() error = %v", err)
 	}
 	if editorCalls != 1 {
@@ -167,6 +167,10 @@ func TestRunWorkspaceConfigEditReplacesCompleteSet(t *testing.T) {
 	}
 	if got := output.String(); got != "Workspace config updated: devdash\n" {
 		t.Errorf("edit output = %q", got)
+	}
+	wantFeedback := "Opening editor. Save and close to apply; close without saving to keep current values.\n"
+	if got := feedback.String(); got != wantFeedback {
+		t.Errorf("edit feedback = %q, want %q", got, wantFeedback)
 	}
 	fields := strings.Fields(runAppCommand(t, ctx, "workspace", "config", "list", "devdash"))
 	wantFields := []string{"confluence.space", "MQMS", "github.org", "new-org", "some.query", "a=b=c"}
@@ -199,7 +203,7 @@ func TestRunWorkspaceConfigEditFailurePreservesRows(t *testing.T) {
 			editor := func(context.Context, []byte, io.Reader, io.Writer) ([]byte, error) {
 				return []byte(test.edited), test.editErr
 			}
-			err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, strings.NewReader(""), &output, editor)
+			err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, strings.NewReader(""), &output, &bytes.Buffer{}, editor)
 			if err == nil || err.Error() != test.wantErr {
 				t.Fatalf("edit error = %v, want %q", err, test.wantErr)
 			}
@@ -255,7 +259,7 @@ func TestRunWorkspaceConfigReservedKeysAndEditPreservation(t *testing.T) {
 		}
 		return []byte("github.org=new\n"), nil
 	}
-	if err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, strings.NewReader(""), &output, editor); err != nil {
+	if err := runWorkspaceConfigWithEditor(ctx, []string{"edit", "devdash"}, strings.NewReader(""), &output, &bytes.Buffer{}, editor); err != nil {
 		t.Fatalf("edit config: %v", err)
 	}
 
@@ -299,7 +303,7 @@ func TestRunWorkspaceConfigValidatesBeforeDatabaseOpen(t *testing.T) {
 			databasePath := filepath.Join(t.TempDir(), "devdash.db")
 			t.Setenv("DEVDASH_DB", databasePath)
 			var output bytes.Buffer
-			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			err := run(context.Background(), test.args, strings.NewReader(""), &output, &bytes.Buffer{})
 			if err == nil || err.Error() != test.wantErr {
 				t.Fatalf("run() error = %v, want %q", err, test.wantErr)
 			}

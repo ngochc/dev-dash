@@ -24,23 +24,24 @@ func TestRunTopLevelCommands(t *testing.T) {
 	t.Setenv("DEVDASH_DB", databasePath)
 
 	tests := []struct {
-		name       string
-		args       []string
-		wantOutput string
-		wantError  string
+		name         string
+		args         []string
+		wantOutput   string
+		wantFeedback string
+		wantError    string
 	}{
 		{name: "root", wantOutput: "devdash\n"},
 		{name: "help", args: []string{"help"}, wantOutput: "devdash update"},
 		{name: "short help", args: []string{"-h"}, wantOutput: "Usage:"},
 		{name: "long help", args: []string{"--help"}, wantOutput: "Usage:"},
-		{name: "doctor", args: []string{"doctor"}, wantOutput: "migration  OK"},
+		{name: "doctor", args: []string{"doctor"}, wantOutput: "migration  OK", wantFeedback: "Checking database and migrations...\nChecking database and migrations: done\n"},
 		{name: "unknown", args: []string{"unknown"}, wantError: "unknown command: unknown"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var output bytes.Buffer
-			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			var output, feedback bytes.Buffer
+			err := run(context.Background(), test.args, strings.NewReader(""), &output, &feedback)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("run() error = %v, want containing %q", err, test.wantError)
@@ -52,6 +53,9 @@ func TestRunTopLevelCommands(t *testing.T) {
 			}
 			if !strings.Contains(output.String(), test.wantOutput) {
 				t.Errorf("run() output = %q, want containing %q", output.String(), test.wantOutput)
+			}
+			if got := feedback.String(); got != test.wantFeedback {
+				t.Errorf("run() feedback = %q, want %q", got, test.wantFeedback)
 			}
 		})
 	}
@@ -76,7 +80,7 @@ func TestRunVersion(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			err := run(context.Background(), test.args, strings.NewReader(""), &output, &bytes.Buffer{})
 			if test.wantError == "" {
 				if err != nil {
 					t.Fatalf("run() error = %v", err)
@@ -124,7 +128,7 @@ func TestHelpListsGuidedWorkspaceCommands(t *testing.T) {
 }
 func TestRunUpdate(t *testing.T) {
 	ctx := context.Background()
-	var output bytes.Buffer
+	var output, feedback bytes.Buffer
 	wantErr := errors.New("update failed")
 	calls := 0
 
@@ -133,22 +137,25 @@ func TestRunUpdate(t *testing.T) {
 		if gotCtx != ctx {
 			t.Errorf("update context differs from run context")
 		}
-		if gotOutput != &output {
-			t.Errorf("update output = %v, want run output", gotOutput)
+		if gotOutput != &feedback {
+			t.Errorf("update output = %v, want feedback output", gotOutput)
 		}
 		fmt.Fprint(gotOutput, "updater output")
 		return wantErr
 	}
 
-	err := runWithUpdater(ctx, []string{"update"}, strings.NewReader(""), &output, updater)
+	err := runWithUpdater(ctx, []string{"update"}, strings.NewReader(""), &output, &feedback, updater)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("runWithUpdater() error = %v, want %v", err, wantErr)
 	}
 	if calls != 1 {
 		t.Errorf("update calls = %d, want 1", calls)
 	}
-	if got := output.String(); got != "updater output" {
-		t.Errorf("runWithUpdater() output = %q, want updater output", got)
+	if got := output.String(); got != "" {
+		t.Errorf("runWithUpdater() output = %q, want empty", got)
+	}
+	if got := feedback.String(); got != "updater output" {
+		t.Errorf("runWithUpdater() feedback = %q, want updater output", got)
 	}
 }
 
@@ -159,7 +166,7 @@ func TestRunUpdateRejectsArguments(t *testing.T) {
 		return nil
 	}
 
-	err := runWithUpdater(context.Background(), []string{"update", "--help"}, strings.NewReader(""), io.Discard, updater)
+	err := runWithUpdater(context.Background(), []string{"update", "--help"}, strings.NewReader(""), io.Discard, &bytes.Buffer{}, updater)
 	if err == nil || err.Error() != "usage: devdash update" {
 		t.Fatalf("runWithUpdater() error = %v, want usage error", err)
 	}
@@ -177,7 +184,7 @@ func TestRunWorkspaceLifecycle(t *testing.T) {
 	runCommand := func(args ...string) string {
 		t.Helper()
 		var output bytes.Buffer
-		if err := run(ctx, args, strings.NewReader(""), &output); err != nil {
+		if err := run(ctx, args, strings.NewReader(""), &output, &bytes.Buffer{}); err != nil {
 			t.Fatalf("run(%v) error = %v", args, err)
 		}
 		return output.String()
@@ -234,7 +241,7 @@ func TestRunWorkspaceErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			err := run(context.Background(), test.args, strings.NewReader(""), &output, &bytes.Buffer{})
 			if err == nil || !strings.Contains(err.Error(), test.wantError) {
 				t.Fatalf("run() error = %v, want containing %q", err, test.wantError)
 			}
@@ -264,7 +271,7 @@ func TestRunSecretLifecycle(t *testing.T) {
 
 	runCommand := func(input string, args ...string) (string, error) {
 		var output bytes.Buffer
-		err := run(ctx, args, strings.NewReader(input), &output)
+		err := run(ctx, args, strings.NewReader(input), &output, &bytes.Buffer{})
 		return output.String(), err
 	}
 
@@ -413,7 +420,7 @@ func TestRunSecretArgumentErrors(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := run(context.Background(), test.args, strings.NewReader(""), io.Discard)
+			err := run(context.Background(), test.args, strings.NewReader(""), io.Discard, &bytes.Buffer{})
 			if err == nil || err.Error() != test.want {
 				t.Errorf("run() error = %v, want %q", err, test.want)
 			}
@@ -425,7 +432,7 @@ func TestRunSecretRejectsInvalidKeyBeforeStorage(t *testing.T) {
 	databasePath := filepath.Join(t.TempDir(), "devdash.db")
 	t.Setenv("DEVDASH_DB", databasePath)
 
-	err := run(context.Background(), []string{"secret", "get", ".invalid"}, strings.NewReader(""), io.Discard)
+	err := run(context.Background(), []string{"secret", "get", ".invalid"}, strings.NewReader(""), io.Discard, &bytes.Buffer{})
 	if !errors.Is(err, secret.ErrInvalidKey) {
 		t.Fatalf("run() error = %v, want ErrInvalidKey", err)
 	}
@@ -649,6 +656,6 @@ func runAppCommand(t *testing.T, ctx context.Context, args ...string) string {
 
 func runAppCommandError(ctx context.Context, args ...string) (string, error) {
 	var output bytes.Buffer
-	err := run(ctx, args, strings.NewReader(""), &output)
+	err := run(ctx, args, strings.NewReader(""), &output, &bytes.Buffer{})
 	return output.String(), err
 }

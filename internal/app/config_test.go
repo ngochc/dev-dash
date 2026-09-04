@@ -10,7 +10,7 @@ import (
 
 func TestRunConfigKeysGitHub(t *testing.T) {
 	var output bytes.Buffer
-	if err := run(context.Background(), []string{"config", "keys", "github"}, strings.NewReader(""), &output); err != nil {
+	if err := run(context.Background(), []string{"config", "keys", "github"}, strings.NewReader(""), &output, &bytes.Buffer{}); err != nil {
 		t.Fatalf("run(config keys github) error = %v", err)
 	}
 	fields := strings.Fields(output.String())

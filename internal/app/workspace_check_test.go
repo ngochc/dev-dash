@@ -18,7 +18,7 @@ func TestExecuteWorkspaceCheckIncompleteConfiguration(t *testing.T) {
 	dependencies := newCheckDependencies()
 	var output bytes.Buffer
 
-	err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies)
+	err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies)
 	if !errors.Is(err, ErrWorkspaceIncomplete) {
 		t.Fatalf("executeWorkspaceCheck() error = %v, want ErrWorkspaceIncomplete", err)
 	}
@@ -41,7 +41,7 @@ func TestExecuteWorkspaceCheckReportsConfiguredAndInvalidBaseURL(t *testing.T) {
 		dependencies := newCheckDependencies()
 		dependencies.config.(*fakeSetupConfig).values = map[string]string{"base_url": "https://git.example.com/", "org": "team"}
 		var output bytes.Buffer
-		if err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies); err != nil {
+		if err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 			t.Fatalf("executeWorkspaceCheck() error = %v", err)
 		}
 		if !strings.Contains(output.String(), "github.base_url: https://git.example.com (configured)") {
@@ -53,7 +53,7 @@ func TestExecuteWorkspaceCheckReportsConfiguredAndInvalidBaseURL(t *testing.T) {
 		dependencies := newCheckDependencies()
 		dependencies.config.(*fakeSetupConfig).values = map[string]string{"base_url": "not-a-url", "org": "team"}
 		var output bytes.Buffer
-		err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies)
+		err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies)
 		if !errors.Is(err, ErrWorkspaceDegraded) {
 			t.Fatalf("executeWorkspaceCheck() error = %v, want ErrWorkspaceDegraded", err)
 		}
@@ -76,13 +76,26 @@ func TestExecuteWorkspaceCheckReadyCountsCachedRepositoryStates(t *testing.T) {
 		{State: repositorydomain.StateInvalid},
 		{State: repositorydomain.StateNotCloned},
 	}
-	var output bytes.Buffer
+	var output, feedback bytes.Buffer
+	github := dependencies.github.(*fakeReadinessChecker)
+	repositories := dependencies.repositories.(*fakeCheckRepositories)
+	github.beforeCheck = func() {
+		if got, want := feedback.String(), "Checking GitHub authentication...\n"; got != want {
+			t.Errorf("feedback at authentication check = %q, want %q", got, want)
+		}
+	}
+	repositories.beforeList = func() {
+		want := "Checking GitHub authentication...\nChecking GitHub authentication: done\nInspecting repositories...\n"
+		if got := feedback.String(); got != want {
+			t.Errorf("feedback at repository inspection = %q, want %q", got, want)
+		}
+	}
 
-	if err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies); err != nil {
+	if err := executeWorkspaceCheck(context.Background(), "workspace", &output, &feedback, dependencies); err != nil {
 		t.Fatalf("executeWorkspaceCheck() error = %v", err)
 	}
-	if dependencies.github.(*fakeReadinessChecker).calls != 1 || dependencies.repositories.(*fakeCheckRepositories).calls != 1 {
-		t.Fatalf("check calls = GitHub %d, repositories %d; want one each", dependencies.github.(*fakeReadinessChecker).calls, dependencies.repositories.(*fakeCheckRepositories).calls)
+	if github.calls != 1 || repositories.calls != 1 {
+		t.Fatalf("check calls = GitHub %d, repositories %d; want one each", github.calls, repositories.calls)
 	}
 	for _, text := range []string{
 		"gh: installed", "Authentication: authenticated", "Discovered: 5", "Cloned: 2",
@@ -94,6 +107,10 @@ func TestExecuteWorkspaceCheckReadyCountsCachedRepositoryStates(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "Configure with:") {
 		t.Errorf("ready output contains setup guidance: %q", output.String())
+	}
+	wantFeedback := "Checking GitHub authentication...\nChecking GitHub authentication: done\nInspecting repositories...\nInspecting repositories: done\n"
+	if got := feedback.String(); got != wantFeedback {
+		t.Errorf("feedback = %q, want %q", got, wantFeedback)
 	}
 }
 
@@ -113,7 +130,7 @@ func TestExecuteWorkspaceCheckMapsGitHubFailures(t *testing.T) {
 			dependencies.config.(*fakeSetupConfig).values = map[string]string{"org": "team"}
 			dependencies.github.(*fakeReadinessChecker).err = test.checkErr
 			var output bytes.Buffer
-			err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies)
+			err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies)
 			if !errors.Is(err, ErrWorkspaceDegraded) || !errors.Is(err, test.wantCause) {
 				t.Fatalf("executeWorkspaceCheck() error = %v, want degraded and %v", err, test.wantCause)
 			}
@@ -130,7 +147,7 @@ func TestExecuteWorkspaceCheckDegradesForMissingRoot(t *testing.T) {
 	dependencies.directories.(*fakeDirectoryChecker).exists = false
 	var output bytes.Buffer
 
-	err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies)
+	err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies)
 	if !errors.Is(err, ErrWorkspaceDegraded) {
 		t.Fatalf("executeWorkspaceCheck() error = %v, want ErrWorkspaceDegraded", err)
 	}
@@ -146,7 +163,7 @@ func TestExecuteWorkspaceCheckDegradesForRepositoryInspectionFailure(t *testing.
 	dependencies.repositories.(*fakeCheckRepositories).err = inspectionErr
 	var output bytes.Buffer
 
-	err := executeWorkspaceCheck(context.Background(), "workspace", &output, dependencies)
+	err := executeWorkspaceCheck(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies)
 	if !errors.Is(err, ErrWorkspaceDegraded) || !errors.Is(err, inspectionErr) {
 		t.Fatalf("executeWorkspaceCheck() error = %v, want degraded inspection error", err)
 	}
@@ -159,7 +176,7 @@ func TestWorkspaceCheckValidatesArgumentsBeforeDatabaseCreation(t *testing.T) {
 	for _, args := range [][]string{{"workspace", "check"}, {"workspace", "check", "workspace", "extra"}} {
 		databasePath := filepath.Join(t.TempDir(), "devdash.db")
 		t.Setenv("DEVDASH_DB", databasePath)
-		err := run(context.Background(), args, strings.NewReader(""), &bytes.Buffer{})
+		err := run(context.Background(), args, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || err.Error() != "usage: devdash workspace check <workspace>" {
 			t.Fatalf("run(%v) error = %v, want check usage", args, err)
 		}
@@ -180,22 +197,30 @@ func newCheckDependencies() workspaceCheckDependencies {
 }
 
 type fakeReadinessChecker struct {
-	calls int
-	err   error
+	calls       int
+	err         error
+	beforeCheck func()
 }
 
 func (f *fakeReadinessChecker) Check(context.Context, string) (workspace.Workspace, githubintegration.Config, error) {
+	if f.beforeCheck != nil {
+		f.beforeCheck()
+	}
 	f.calls++
 	return workspace.Workspace{}, githubintegration.Config{}, f.err
 }
 
 type fakeCheckRepositories struct {
-	items []repositorydomain.Listed
-	err   error
-	calls int
+	items      []repositorydomain.Listed
+	err        error
+	calls      int
+	beforeList func()
 }
 
 func (f *fakeCheckRepositories) List(context.Context, string) (workspace.Workspace, []repositorydomain.Listed, error) {
+	if f.beforeList != nil {
+		f.beforeList()
+	}
 	f.calls++
 	return workspace.Workspace{}, append([]repositorydomain.Listed(nil), f.items...), f.err
 }

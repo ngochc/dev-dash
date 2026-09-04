@@ -12,14 +12,14 @@ import (
 type updateRunner func(context.Context, io.Writer) error
 
 func Run(ctx context.Context, args []string) error {
-	return run(ctx, args, os.Stdin, os.Stdout)
+	return run(ctx, args, os.Stdin, os.Stdout, os.Stderr)
 }
 
-func run(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
-	return runWithUpdater(ctx, args, input, output, platform.Update)
+func run(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer) error {
+	return runWithUpdater(ctx, args, input, output, feedback, platform.Update)
 }
 
-func runWithUpdater(ctx context.Context, args []string, input io.Reader, output io.Writer, updater updateRunner) error {
+func runWithUpdater(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer, updater updateRunner) error {
 	if len(args) == 0 {
 		fmt.Fprintln(output, "devdash")
 		return nil
@@ -27,7 +27,7 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 
 	switch args[0] {
 	case "doctor":
-		return runDoctor(ctx, output)
+		return runDoctor(ctx, output, feedback)
 	case "version":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: devdash version")
@@ -38,14 +38,14 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 		if len(args) != 1 {
 			return fmt.Errorf("usage: devdash update")
 		}
-		return updater(ctx, output)
+		return updater(ctx, feedback)
 	case "config":
 		return runConfig(args[1:], output)
 	case "repo":
-		return runRepo(ctx, args[1:], input, output)
+		return runRepo(ctx, args[1:], input, output, feedback)
 
 	case "workspace":
-		return runWorkspace(ctx, args[1:], input, output)
+		return runWorkspace(ctx, args[1:], input, output, feedback)
 	case "resource-type":
 		return runResourceType(ctx, args[1:], output)
 
@@ -56,7 +56,7 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 		return runResource(ctx, args[1:], output)
 
 	case "secret":
-		return runSecret(ctx, args[1:], input, output)
+		return runSecret(ctx, args[1:], input, output, feedback)
 
 	case "help", "-h", "--help":
 		printHelp(output)

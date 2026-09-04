@@ -103,7 +103,11 @@ func (p *terminalPicker) pickFZF(ctx context.Context, executable, title string, 
 	for index, option := range options {
 		fmt.Fprintf(&input, "%d\t%s\n", index+1, option.Label)
 	}
-	arguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=" + title + ": "}
+	header := "↑/↓ move • Enter select • Esc cancel"
+	if multi {
+		header = "↑/↓ move • Tab toggle • Enter confirm • Esc cancel"
+	}
+	arguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=" + title + ": ", "--header=" + header}
 	if multi {
 		arguments = append(arguments, "--multi")
 	}
@@ -160,6 +164,11 @@ func (p *terminalPicker) pickNumbered(title string, options []Option, multi bool
 	for index, option := range options {
 		fmt.Fprintf(p.output, "  %d. %s\n", index+1, option.Label)
 	}
+	if multi {
+		fmt.Fprintln(p.output, "Type comma-separated numbers and press Enter; press Enter alone to cancel.")
+	} else {
+		fmt.Fprintln(p.output, "Type a number and press Enter; press Enter alone to cancel.")
+	}
 
 	for {
 		if multi {
@@ -215,11 +224,11 @@ func parseIndexes(line string, optionCount int, multi bool) ([]int, bool) {
 
 func (p *terminalPicker) Confirm(prompt string, defaultValue bool) (bool, error) {
 	for {
-		choices := "y/N"
+		choices := "[y/N] (Enter = no): "
 		if defaultValue {
-			choices = "Y/n"
+			choices = "[Y/n] (Enter = yes): "
 		}
-		fmt.Fprintf(p.output, "%s [%s]: ", prompt, choices)
+		fmt.Fprintf(p.output, "%s %s", prompt, choices)
 		line, err := p.readLine()
 		if err != nil {
 			return false, err
@@ -239,9 +248,9 @@ func (p *terminalPicker) Confirm(prompt string, defaultValue bool) (bool, error)
 
 func (p *terminalPicker) Input(prompt, defaultValue string) (string, error) {
 	if defaultValue == "" {
-		fmt.Fprintf(p.output, "%s ", prompt)
+		fmt.Fprintf(p.output, "%s (Enter to continue) ", prompt)
 	} else {
-		fmt.Fprintf(p.output, "%s [%s]: ", prompt, defaultValue)
+		fmt.Fprintf(p.output, "%s [%s] (Enter to keep default): ", prompt, defaultValue)
 	}
 	line, err := p.readLine()
 	if err != nil {

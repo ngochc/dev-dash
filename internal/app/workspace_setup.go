@@ -14,6 +14,7 @@ import (
 	repositorydomain "github.com/ngochc/dev-dash/internal/repository"
 	"github.com/ngochc/dev-dash/internal/storage/sqlite"
 	"github.com/ngochc/dev-dash/internal/ui/picker"
+	"github.com/ngochc/dev-dash/internal/ui/progress"
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
@@ -45,7 +46,7 @@ type workspaceSetupDependencies struct {
 	picker       picker.Picker
 }
 
-func runWorkspaceSetup(ctx context.Context, workspaceIdentifier string, input io.Reader, output io.Writer) error {
+func runWorkspaceSetup(ctx context.Context, workspaceIdentifier string, input io.Reader, output, feedback io.Writer) error {
 	databasePath, err := config.DatabasePath()
 	if err != nil {
 		return fmt.Errorf("resolve database path: %w", err)
@@ -69,16 +70,16 @@ func runWorkspaceSetup(ctx context.Context, workspaceIdentifier string, input io
 		gitintegration.NewCLIInspector(),
 		platform.DirectoryManager{},
 	)
-	return executeWorkspaceSetup(ctx, workspaceIdentifier, output, workspaceSetupDependencies{
+	return executeWorkspaceSetup(ctx, workspaceIdentifier, output, feedback, workspaceSetupDependencies{
 		workspaces:   workspaceService,
 		config:       configService,
 		github:       githubClient,
 		repositories: repositoryService,
-		picker:       picker.New(input, output),
+		picker:       picker.New(input, feedback),
 	})
 }
 
-func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, output io.Writer, dependencies workspaceSetupDependencies) error {
+func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, output, feedback io.Writer, dependencies workspaceSetupDependencies) error {
 	item, err := dependencies.workspaces.Get(ctx, workspaceIdentifier)
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, outp
 	if err != nil {
 		return err
 	}
-	githubConfig, cancelled, err := selectGitHubHost(ctx, item, values, output, dependencies)
+	githubConfig, cancelled, err := selectGitHubHost(ctx, item, values, output, feedback, dependencies)
 	if err != nil {
 		return err
 	}
@@ -97,11 +98,13 @@ func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, outp
 		fmt.Fprintln(output, "Workspace setup cancelled.")
 		return nil
 	}
-	if err := dependencies.github.Validate(ctx, githubConfig); err != nil {
+	if err := progress.Run(feedback, "Checking GitHub authentication", func() error {
+		return dependencies.github.Validate(ctx, githubConfig)
+	}); err != nil {
 		return workspaceSetupValidationError(item.Name, githubConfig.Host, err)
 	}
 
-	organization, cancelled, err := selectGitHubOwner(ctx, item, values, githubConfig, output, dependencies)
+	organization, cancelled, err := selectGitHubOwner(ctx, item, values, githubConfig, output, feedback, dependencies)
 	if err != nil {
 		return err
 	}
@@ -114,10 +117,18 @@ func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, outp
 	}
 	githubConfig.Organization = organization
 
-	if _, _, err := dependencies.repositories.Refresh(ctx, item.ID); err != nil {
+	if err := progress.Run(feedback, "Refreshing repositories", func() error {
+		_, _, refreshErr := dependencies.repositories.Refresh(ctx, item.ID)
+		return refreshErr
+	}); err != nil {
 		return err
 	}
-	_, repositories, err := dependencies.repositories.List(ctx, item.ID)
+	var repositories []repositorydomain.Listed
+	err = progress.Run(feedback, "Inspecting repositories", func() error {
+		var listErr error
+		_, repositories, listErr = dependencies.repositories.List(ctx, item.ID)
+		return listErr
+	})
 	if err != nil {
 		return err
 	}
@@ -142,7 +153,11 @@ func executeWorkspaceSetup(ctx context.Context, workspaceIdentifier string, outp
 			return err
 		}
 		if confirmed {
-			_, results, cloneErr = dependencies.repositories.CloneKnown(ctx, item.ID, selected)
+			cloneErr = progress.Run(feedback, "Cloning selected repositories", func() error {
+				var err error
+				_, results, err = dependencies.repositories.CloneKnown(ctx, item.ID, selected)
+				return err
+			})
 			if err := printCloneResults(output, results); err != nil {
 				return err
 			}
@@ -158,6 +173,7 @@ func selectGitHubHost(
 	item workspace.Workspace,
 	values map[string]string,
 	output io.Writer,
+	feedback io.Writer,
 	dependencies workspaceSetupDependencies,
 ) (githubintegration.Config, bool, error) {
 	storedConfig, storedErr := githubintegration.ResolveHostConfig(values)
@@ -228,9 +244,15 @@ func selectGitHubOwner(
 	values map[string]string,
 	config githubintegration.Config,
 	output io.Writer,
+	feedback io.Writer,
 	dependencies workspaceSetupDependencies,
 ) (string, bool, error) {
-	owners, discoveryErr := dependencies.github.DiscoverOwners(ctx, config)
+	var owners []githubintegration.Owner
+	discoveryErr := progress.Run(feedback, "Discovering GitHub owners", func() error {
+		var err error
+		owners, err = dependencies.github.DiscoverOwners(ctx, config)
+		return err
+	})
 	existingOrganization := strings.TrimSpace(values["org"])
 	if discoveryErr != nil || len(owners) == 0 {
 		if discoveryErr != nil {

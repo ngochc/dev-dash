@@ -23,7 +23,7 @@ func TestExecuteWorkspaceSetupKeepsExistingConfiguration(t *testing.T) {
 	dependencies.picker.(*fakeSetupPicker).confirms = []bool{true, true}
 	var output bytes.Buffer
 
-	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies); err != nil {
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 		t.Fatalf("executeWorkspaceSetup() error = %v", err)
 	}
 	githubClient := dependencies.github.(*fakeSetupGitHub)
@@ -50,7 +50,7 @@ func TestExecuteWorkspaceSetupSelectsDefaultHostAndPersonalOwner(t *testing.T) {
 	pickerFake.one = []string{"github.com", "personal"}
 	var output bytes.Buffer
 
-	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies); err != nil {
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 		t.Fatalf("executeWorkspaceSetup() error = %v", err)
 	}
 	config := dependencies.config.(*fakeSetupConfig)
@@ -70,7 +70,7 @@ func TestExecuteWorkspaceSetupNormalizesCustomGHESHost(t *testing.T) {
 	pickerFake.inputs = []string{"not a URL", "https://Git.Example.com///"}
 	var output bytes.Buffer
 
-	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies); err != nil {
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 		t.Fatalf("executeWorkspaceSetup() error = %v", err)
 	}
 	config := dependencies.config.(*fakeSetupConfig)
@@ -99,7 +99,7 @@ func TestExecuteWorkspaceSetupMapsGitHubReadinessErrors(t *testing.T) {
 			dependencies := newSetupDependencies()
 			dependencies.github.(*fakeSetupGitHub).validateErr = test.err
 			dependencies.picker.(*fakeSetupPicker).one = []string{"github.com"}
-			err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, dependencies)
+			err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
 			if !errors.Is(err, test.want) || err.Error() != test.text {
 				t.Fatalf("executeWorkspaceSetup() error = %v, want %q preserving %v", err, test.text, test.want)
 			}
@@ -119,7 +119,7 @@ func TestExecuteWorkspaceSetupFallsBackToManualOwner(t *testing.T) {
 	pickerFake.inputs = []string{"manual-owner"}
 	var output bytes.Buffer
 
-	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies); err != nil {
+	if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 		t.Fatalf("executeWorkspaceSetup() error = %v", err)
 	}
 	if got := dependencies.config.(*fakeSetupConfig).setValues[githubintegration.OrganizationKey]; got != "manual-owner" {
@@ -137,7 +137,7 @@ func TestExecuteWorkspaceSetupStopsOnRefreshFailure(t *testing.T) {
 	refreshErr := errors.New("refresh failed")
 	dependencies.repositories.(*fakeSetupRepositories).refreshErr = refreshErr
 
-	err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, dependencies)
+	err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies)
 	if !errors.Is(err, refreshErr) {
 		t.Fatalf("executeWorkspaceSetup() error = %v, want refresh error", err)
 	}
@@ -166,13 +166,37 @@ func TestExecuteWorkspaceSetupClonesSelectedExternalKeysAndSummarizes(t *testing
 	pickerFake.one = []string{"github.com", "team"}
 	pickerFake.many = [][]string{{"team/web", "team/api", "team/broken"}}
 	pickerFake.confirms = []bool{true}
-	var output bytes.Buffer
+	var output, feedback bytes.Buffer
+	wantAtOperation := []string{
+		"Checking GitHub authentication...\n",
+		"Checking GitHub authentication...\nChecking GitHub authentication: done\nDiscovering GitHub owners...\n",
+		"Checking GitHub authentication...\nChecking GitHub authentication: done\nDiscovering GitHub owners...\nDiscovering GitHub owners: done\nRefreshing repositories...\n",
+		"Checking GitHub authentication...\nChecking GitHub authentication: done\nDiscovering GitHub owners...\nDiscovering GitHub owners: done\nRefreshing repositories...\nRefreshing repositories: done\nInspecting repositories...\n",
+		"Checking GitHub authentication...\nChecking GitHub authentication: done\nDiscovering GitHub owners...\nDiscovering GitHub owners: done\nRefreshing repositories...\nRefreshing repositories: done\nInspecting repositories...\nInspecting repositories: done\nCloning selected repositories...\n",
+	}
+	operation := 0
+	assertProgressStarted := func() {
+		t.Helper()
+		if got, want := feedback.String(), wantAtOperation[operation]; got != want {
+			t.Errorf("feedback before operation %d = %q, want %q", operation, got, want)
+		}
+		operation++
+	}
+	github := dependencies.github.(*fakeSetupGitHub)
+	github.beforeValidate = assertProgressStarted
+	github.beforeDiscover = assertProgressStarted
+	repositories := dependencies.repositories.(*fakeSetupRepositories)
+	repositories.beforeRefresh = assertProgressStarted
+	repositories.beforeList = assertProgressStarted
+	repositories.beforeClone = assertProgressStarted
 
-	err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies)
+	err := executeWorkspaceSetup(context.Background(), "workspace", &output, &feedback, dependencies)
 	if !errors.Is(err, cloneErr) {
 		t.Fatalf("executeWorkspaceSetup() error = %v, want aggregate clone error", err)
 	}
-	repositories := dependencies.repositories.(*fakeSetupRepositories)
+	if operation != len(wantAtOperation) {
+		t.Fatalf("setup operations = %d, want %d", operation, len(wantAtOperation))
+	}
 	wantSelectors := []string{"team/web", "team/api", "team/broken"}
 	if !reflect.DeepEqual(repositories.cloneSelectors, wantSelectors) {
 		t.Errorf("CloneKnown selectors = %#v, want %#v", repositories.cloneSelectors, wantSelectors)
@@ -190,6 +214,13 @@ func TestExecuteWorkspaceSetupClonesSelectedExternalKeysAndSummarizes(t *testing
 			t.Errorf("output = %q, want containing %q", output.String(), text)
 		}
 	}
+	if strings.Contains(output.String(), "Checking GitHub") || strings.Contains(output.String(), "Discovering GitHub") || strings.Contains(output.String(), "Refreshing repositories") || strings.Contains(output.String(), "Inspecting repositories") || strings.Contains(output.String(), "Cloning selected repositories") {
+		t.Errorf("setup result contains progress feedback: %q", output.String())
+	}
+	wantFeedback := wantAtOperation[len(wantAtOperation)-1] + "Cloning selected repositories: failed\n"
+	if got := feedback.String(); got != wantFeedback {
+		t.Errorf("setup feedback = %q, want %q", got, wantFeedback)
+	}
 }
 
 func TestExecuteWorkspaceSetupDeclineAndCancellationDoNotClone(t *testing.T) {
@@ -200,7 +231,7 @@ func TestExecuteWorkspaceSetupDeclineAndCancellationDoNotClone(t *testing.T) {
 		pickerFake.one = []string{"github.com", "team"}
 		pickerFake.many = [][]string{{"team/api"}}
 		pickerFake.confirms = []bool{false}
-		if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, dependencies); err != nil {
+		if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies); err != nil {
 			t.Fatalf("executeWorkspaceSetup() error = %v", err)
 		}
 		if dependencies.repositories.(*fakeSetupRepositories).cloneCalls != 0 {
@@ -212,7 +243,7 @@ func TestExecuteWorkspaceSetupDeclineAndCancellationDoNotClone(t *testing.T) {
 		dependencies := newSetupDependencies()
 		dependencies.picker.(*fakeSetupPicker).oneErrors = []error{picker.ErrCancelled}
 		var output bytes.Buffer
-		if err := executeWorkspaceSetup(context.Background(), "workspace", &output, dependencies); err != nil {
+		if err := executeWorkspaceSetup(context.Background(), "workspace", &output, &bytes.Buffer{}, dependencies); err != nil {
 			t.Fatalf("executeWorkspaceSetup() error = %v", err)
 		}
 		if len(dependencies.config.(*fakeSetupConfig).setValues) != 0 || dependencies.github.(*fakeSetupGitHub).validateCalls != 0 {
@@ -229,7 +260,7 @@ func TestExecuteWorkspaceSetupDeclineAndCancellationDoNotClone(t *testing.T) {
 		pickerFake := dependencies.picker.(*fakeSetupPicker)
 		pickerFake.one = []string{"github.com"}
 		pickerFake.oneErrors = []error{nil, picker.ErrCancelled}
-		if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, dependencies); err != nil {
+		if err := executeWorkspaceSetup(context.Background(), "workspace", &bytes.Buffer{}, &bytes.Buffer{}, dependencies); err != nil {
 			t.Fatalf("executeWorkspaceSetup() error = %v", err)
 		}
 		config := dependencies.config.(*fakeSetupConfig)
@@ -246,7 +277,7 @@ func TestWorkspaceSetupValidatesArgumentsBeforeDatabaseCreation(t *testing.T) {
 	for _, args := range [][]string{{"workspace", "setup"}, {"workspace", "setup", "workspace", "extra"}} {
 		databasePath := filepath.Join(t.TempDir(), "devdash.db")
 		t.Setenv("DEVDASH_DB", databasePath)
-		err := run(context.Background(), args, strings.NewReader(""), &bytes.Buffer{})
+		err := run(context.Background(), args, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 		if err == nil || err.Error() != "usage: devdash workspace setup <workspace>" {
 			t.Fatalf("run(%v) error = %v, want setup usage", args, err)
 		}
@@ -294,21 +325,29 @@ func (f *fakeSetupConfig) SetUser(_ context.Context, _ string, key, value string
 }
 
 type fakeSetupGitHub struct {
-	validated     githubintegration.Config
-	validateErr   error
-	owners        []githubintegration.Owner
-	ownerErr      error
-	validateCalls int
-	discoverCalls int
+	validated      githubintegration.Config
+	validateErr    error
+	owners         []githubintegration.Owner
+	ownerErr       error
+	validateCalls  int
+	discoverCalls  int
+	beforeValidate func()
+	beforeDiscover func()
 }
 
 func (f *fakeSetupGitHub) Validate(_ context.Context, config githubintegration.Config) error {
+	if f.beforeValidate != nil {
+		f.beforeValidate()
+	}
 	f.validateCalls++
 	f.validated = config
 	return f.validateErr
 }
 
 func (f *fakeSetupGitHub) DiscoverOwners(context.Context, githubintegration.Config) ([]githubintegration.Owner, error) {
+	if f.beforeDiscover != nil {
+		f.beforeDiscover()
+	}
 	f.discoverCalls++
 	return append([]githubintegration.Owner(nil), f.owners...), f.ownerErr
 }
@@ -322,19 +361,31 @@ type fakeSetupRepositories struct {
 	listCalls      int
 	cloneCalls     int
 	cloneSelectors []string
+	beforeRefresh  func()
+	beforeList     func()
+	beforeClone    func()
 }
 
 func (f *fakeSetupRepositories) Refresh(context.Context, string) (workspace.Workspace, int, error) {
+	if f.beforeRefresh != nil {
+		f.beforeRefresh()
+	}
 	f.refreshCalls++
 	return workspace.Workspace{}, len(f.listed), f.refreshErr
 }
 
 func (f *fakeSetupRepositories) List(context.Context, string) (workspace.Workspace, []repositorydomain.Listed, error) {
+	if f.beforeList != nil {
+		f.beforeList()
+	}
 	f.listCalls++
 	return workspace.Workspace{}, append([]repositorydomain.Listed(nil), f.listed...), nil
 }
 
 func (f *fakeSetupRepositories) CloneKnown(_ context.Context, _ string, selectors []string) (workspace.Workspace, []repositorydomain.CloneResult, error) {
+	if f.beforeClone != nil {
+		f.beforeClone()
+	}
 	f.cloneCalls++
 	f.cloneSelectors = append([]string(nil), selectors...)
 	return workspace.Workspace{}, append([]repositorydomain.CloneResult(nil), f.cloneResults...), f.cloneErr

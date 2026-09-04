@@ -17,14 +17,14 @@ import (
 
 type workspaceConfigEditor func(context.Context, []byte, io.Reader, io.Writer) ([]byte, error)
 
-func runWorkspaceConfig(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
-	return runWorkspaceConfigWithEditor(ctx, args, input, output, func(
+func runWorkspaceConfig(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer) error {
+	return runWorkspaceConfigWithEditor(ctx, args, input, output, feedback, func(
 		ctx context.Context,
 		initial []byte,
 		input io.Reader,
-		output io.Writer,
+		feedback io.Writer,
 	) ([]byte, error) {
-		return platform.EditTemporaryFile(ctx, "devdash-workspace-*.conf", initial, input, output)
+		return platform.EditTemporaryFile(ctx, "devdash-workspace-*.conf", initial, input, feedback)
 	})
 }
 
@@ -33,6 +33,7 @@ func runWorkspaceConfigWithEditor(
 	args []string,
 	input io.Reader,
 	output io.Writer,
+	feedback io.Writer,
 	editor workspaceConfigEditor,
 ) error {
 	if err := validateWorkspaceConfigArgs(args); err != nil {
@@ -99,7 +100,8 @@ func runWorkspaceConfigWithEditor(
 		if err != nil {
 			return err
 		}
-		edited, err := editor(ctx, formatWorkspaceConfig(entries), input, output)
+		fmt.Fprintln(feedback, "Opening editor. Save and close to apply; close without saving to keep current values.")
+		edited, err := editor(ctx, formatWorkspaceConfig(entries), input, feedback)
 		if err != nil {
 			return err
 		}

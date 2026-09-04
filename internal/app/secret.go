@@ -13,7 +13,7 @@ import (
 	"golang.org/x/term"
 )
 
-func runSecret(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
+func runSecret(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer) error {
 	if err := validateSecretArgs(args); err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func runSecret(ctx context.Context, args []string, input io.Reader, output io.Wr
 
 	switch args[0] {
 	case "set":
-		value, err := readSecret(input, output)
+		value, err := readSecret(input, feedback)
 		if err != nil {
 			return err
 		}
@@ -108,14 +108,14 @@ func validateSecretArgs(args []string) error {
 	return nil
 }
 
-func readSecret(input io.Reader, output io.Writer) (string, error) {
+func readSecret(input io.Reader, feedback io.Writer) (string, error) {
 	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		fmt.Fprint(output, "Secret: ")
+		fmt.Fprint(feedback, "Secret (input hidden; Enter to submit): ")
 		value, err := term.ReadPassword(int(file.Fd()))
 		if err != nil {
 			return "", fmt.Errorf("read secret: %w", err)
 		}
-		fmt.Fprintln(output)
+		fmt.Fprintln(feedback)
 		return string(value), nil
 	}
 

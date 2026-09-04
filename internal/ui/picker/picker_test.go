@@ -26,7 +26,7 @@ func TestPickOneUsesFZFAndMapsValue(t *testing.T) {
 		if executable != "/tools/fzf" {
 			t.Errorf("executable = %q, want /tools/fzf", executable)
 		}
-		wantArguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repository: "}
+		wantArguments := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repository: ", "--header=↑/↓ move • Enter select • Esc cancel"}
 		if !reflect.DeepEqual(arguments, wantArguments) {
 			t.Errorf("arguments = %#v, want %#v", arguments, wantArguments)
 		}
@@ -54,7 +54,7 @@ func TestPickOneUsesFZFAndMapsValue(t *testing.T) {
 func TestPickManyUsesFZFMultiAndPreservesSelectionOrder(t *testing.T) {
 	picker := fzfPicker(t)
 	picker.runFZF = func(_ context.Context, _ string, arguments []string, _ []byte, _ io.Writer) ([]byte, error) {
-		want := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repositories: ", "--multi"}
+		want := []string{"--delimiter=\t", "--with-nth=2..", "--prompt=Repositories: ", "--header=↑/↓ move • Tab toggle • Enter confirm • Esc cancel", "--multi"}
 		if !reflect.DeepEqual(arguments, want) {
 			t.Errorf("arguments = %#v, want %#v", arguments, want)
 		}
@@ -201,6 +201,84 @@ func TestNumberedPickCancellation(t *testing.T) {
 		if _, err := picker.PickMany(context.Background(), "Repositories", testOptions()); !errors.Is(err, ErrCancelled) {
 			t.Fatalf("PickMany() with %q error = %v, want ErrCancelled", input, err)
 		}
+	}
+}
+
+func TestNumberedPickerDisplaysKeyboardHelp(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		multi bool
+		input string
+		want  string
+	}{
+		{
+			name:  "single",
+			input: "2\n",
+			want: "Repository\n  1. First\n  2. Second\n  3. Third\n" +
+				"Type a number and press Enter; press Enter alone to cancel.\n" +
+				"Select [1-3]: ",
+		},
+		{
+			name:  "multiple",
+			multi: true,
+			input: "2,1\n",
+			want: "Repository\n  1. First\n  2. Second\n  3. Third\n" +
+				"Type comma-separated numbers and press Enter; press Enter alone to cancel.\n" +
+				"Select [1-3, comma-separated]: ",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			picker := New(strings.NewReader(test.input), &output)
+			if test.multi {
+				_, _ = picker.PickMany(context.Background(), "Repository", testOptions())
+			} else {
+				_, _ = picker.PickOne(context.Background(), "Repository", testOptions())
+			}
+			if got := output.String(); got != test.want {
+				t.Errorf("picker output = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestConfirmDisplaysDefaultKeyboardHelp(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		defaultValue bool
+		want         string
+	}{
+		{name: "yes", defaultValue: true, want: "Continue? [Y/n] (Enter = yes): "},
+		{name: "no", want: "Continue? [y/N] (Enter = no): "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			picker := New(strings.NewReader("\n"), &output)
+			_, _ = picker.Confirm("Continue?", test.defaultValue)
+			if got := output.String(); got != test.want {
+				t.Errorf("Confirm() output = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestInputDisplaysEnterKeyboardHelp(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		defaultValue string
+		want         string
+	}{
+		{name: "without default", want: "Value: (Enter to continue) "},
+		{name: "with default", defaultValue: "saved", want: "Value: [saved] (Enter to keep default): "},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			picker := New(strings.NewReader("\n"), &output)
+			_, _ = picker.Input("Value:", test.defaultValue)
+			if got := output.String(); got != test.want {
+				t.Errorf("Input() output = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

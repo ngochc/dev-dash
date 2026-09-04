@@ -11,12 +11,12 @@ import (
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
-func runWorkspace(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
+func runWorkspace(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer) error {
 	if len(args) > 0 && args[0] == "resource" {
 		return runWorkspaceResource(ctx, args[1:], output)
 	}
 	if len(args) > 0 && args[0] == "config" {
-		return runWorkspaceConfig(ctx, args[1:], input, output)
+		return runWorkspaceConfig(ctx, args[1:], input, output, feedback)
 	}
 
 	if err := validateWorkspaceArgs(args); err != nil {
@@ -24,9 +24,9 @@ func runWorkspace(ctx context.Context, args []string, input io.Reader, output io
 	}
 	switch args[0] {
 	case "setup":
-		return runWorkspaceSetup(ctx, args[1], input, output)
+		return runWorkspaceSetup(ctx, args[1], input, output, feedback)
 	case "check":
-		return runWorkspaceCheck(ctx, args[1], output)
+		return runWorkspaceCheck(ctx, args[1], output, feedback)
 	}
 
 	dbPath, err := config.DatabasePath()

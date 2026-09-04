@@ -18,20 +18,28 @@ import (
 )
 
 func TestExecuteRepoRefresh(t *testing.T) {
+	var output, feedback bytes.Buffer
 	service := &fakeRepoService{refreshCount: 24}
-	var output bytes.Buffer
-	if err := executeRepo(context.Background(), []string{"refresh", "workspace"}, &output, service, &fakeSetupPicker{}); err != nil {
+	service.beforeRefresh = func() {
+		if got, want := feedback.String(), "Refreshing repositories...\n"; got != want {
+			t.Errorf("feedback at refresh = %q, want %q", got, want)
+		}
+	}
+	if err := executeRepo(context.Background(), []string{"refresh", "workspace"}, &output, &feedback, service, &fakeSetupPicker{}); err != nil {
 		t.Fatalf("executeRepo(refresh) error = %v", err)
 	}
 	if got := output.String(); got != "Repositories refreshed: 24\n" {
 		t.Errorf("refresh output = %q", got)
+	}
+	if got, want := feedback.String(), "Refreshing repositories...\nRefreshing repositories: done\n"; got != want {
+		t.Errorf("refresh feedback = %q, want %q", got, want)
 	}
 }
 
 func TestExecuteRepoList(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		var output bytes.Buffer
-		if err := executeRepo(context.Background(), []string{"list", "workspace"}, &output, &fakeRepoService{}, &fakeSetupPicker{}); err != nil {
+		if err := executeRepo(context.Background(), []string{"list", "workspace"}, &output, &bytes.Buffer{}, &fakeRepoService{}, &fakeSetupPicker{}); err != nil {
 			t.Fatalf("executeRepo(list) error = %v", err)
 		}
 		if output.String() != "No repositories found.\n" {
@@ -45,7 +53,7 @@ func TestExecuteRepoList(t *testing.T) {
 			{Repository: repositorydomain.Repository{ExternalKey: "team/web"}, State: repositorydomain.StateNotCloned},
 		}}
 		var output bytes.Buffer
-		if err := executeRepo(context.Background(), []string{"list", "workspace"}, &output, service, &fakeSetupPicker{}); err != nil {
+		if err := executeRepo(context.Background(), []string{"list", "workspace"}, &output, &bytes.Buffer{}, service, &fakeSetupPicker{}); err != nil {
 			t.Fatalf("executeRepo(list) error = %v", err)
 		}
 		fields := strings.Fields(output.String())
@@ -58,15 +66,20 @@ func TestExecuteRepoList(t *testing.T) {
 
 func TestExecuteRepoClonePrintsResultsAndReturnsFailure(t *testing.T) {
 	cloneErr := errors.New("repository clone failed for 1 repository(s)")
+	var output, feedback bytes.Buffer
 	service := &fakeRepoService{
 		cloneErr: cloneErr,
 		cloneResults: []repositorydomain.CloneResult{
 			{Repository: "team/api", Status: "cloned"},
 			{Repository: "team/web", Error: errors.New("destination conflict")},
 		},
+		beforeClone: func() {
+			if got, want := feedback.String(), "Refreshing and cloning repositories...\n"; got != want {
+				t.Errorf("feedback at clone = %q, want %q", got, want)
+			}
+		},
 	}
-	var output bytes.Buffer
-	err := executeRepo(context.Background(), []string{"clone", "workspace", "--all"}, &output, service, &fakeSetupPicker{})
+	err := executeRepo(context.Background(), []string{"clone", "workspace", "--all"}, &output, &feedback, service, &fakeSetupPicker{})
 	if !errors.Is(err, cloneErr) {
 		t.Fatalf("executeRepo(clone) error = %v, want clone error", err)
 	}
@@ -74,6 +87,12 @@ func TestExecuteRepoClonePrintsResultsAndReturnsFailure(t *testing.T) {
 	want := []string{"team/api", "cloned", "team/web", "failed:", "destination", "conflict"}
 	if !reflect.DeepEqual(fields, want) {
 		t.Errorf("clone fields = %v, want %v", fields, want)
+	}
+	if strings.Contains(output.String(), "Refreshing") {
+		t.Errorf("clone results contain progress feedback: %q", output.String())
+	}
+	if got, want := feedback.String(), "Refreshing and cloning repositories...\nRefreshing and cloning repositories: failed\n"; got != want {
+		t.Errorf("clone feedback = %q, want %q", got, want)
 	}
 	if !service.cloneAll || service.cloneWorkspace != "workspace" || service.cloneSelectors != nil {
 		t.Errorf("clone request = all %v workspace %q selectors %v", service.cloneAll, service.cloneWorkspace, service.cloneSelectors)
@@ -84,7 +103,7 @@ func TestExecuteRepoPickRefreshesBeforePrompt(t *testing.T) {
 	refreshErr := errors.New("refresh failed")
 	service := &fakeRepoService{refreshErr: refreshErr}
 	pickerFake := &fakeSetupPicker{many: [][]string{{"team/api"}}}
-	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &bytes.Buffer{}, service, pickerFake)
+	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &bytes.Buffer{}, &bytes.Buffer{}, service, pickerFake)
 	if !errors.Is(err, refreshErr) {
 		t.Fatalf("executeRepo(pick) error = %v, want refresh error", err)
 	}
@@ -96,7 +115,7 @@ func TestExecuteRepoPickRefreshesBeforePrompt(t *testing.T) {
 func TestExecuteRepoPickPresentsIncompleteConfigGuidance(t *testing.T) {
 	service := &fakeRepoService{refreshErr: fmt.Errorf("refresh: %w", githubintegration.ErrIncompleteConfig)}
 	pickerFake := &fakeSetupPicker{}
-	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &bytes.Buffer{}, service, pickerFake)
+	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &bytes.Buffer{}, &bytes.Buffer{}, service, pickerFake)
 	want := "GitHub configuration is incomplete for workspace \"workspace\".\n\nMissing:\n  github.org\n\nConfigure with:\n  devdash workspace setup workspace"
 	if !errors.Is(err, githubintegration.ErrIncompleteConfig) || err.Error() != want {
 		t.Fatalf("executeRepo(pick) error = %v, want exact setup guidance", err)
@@ -119,7 +138,7 @@ func TestExecuteRepoPickCancellationAndEmptySelection(t *testing.T) {
 			service := &fakeRepoService{}
 			pickerFake := &fakeSetupPicker{many: test.values, manyErrors: test.errors}
 			var output bytes.Buffer
-			if err := executeRepo(context.Background(), []string{"pick", "workspace"}, &output, service, pickerFake); err != nil {
+			if err := executeRepo(context.Background(), []string{"pick", "workspace"}, &output, &bytes.Buffer{}, service, pickerFake); err != nil {
 				t.Fatalf("executeRepo(pick) error = %v", err)
 			}
 			if output.String() != "No repositories selected.\n" {
@@ -134,6 +153,7 @@ func TestExecuteRepoPickCancellationAndEmptySelection(t *testing.T) {
 
 func TestExecuteRepoPickMapsExternalKeysAndPrintsIndependentResults(t *testing.T) {
 	cloneErr := errors.New("aggregate clone failure")
+	var output, feedback bytes.Buffer
 	service := &fakeRepoService{
 		listed: []repositorydomain.Listed{
 			{Repository: repositorydomain.Repository{ExternalKey: "team/api"}, State: repositorydomain.StateCloned},
@@ -146,10 +166,26 @@ func TestExecuteRepoPickMapsExternalKeysAndPrintsIndependentResults(t *testing.T
 		},
 		cloneKnownErr: cloneErr,
 	}
+	service.beforeRefresh = func() {
+		if got, want := feedback.String(), "Refreshing repositories...\n"; got != want {
+			t.Errorf("feedback at refresh = %q, want %q", got, want)
+		}
+	}
+	service.beforeList = func() {
+		want := "Refreshing repositories...\nRefreshing repositories: done\nInspecting repositories...\n"
+		if got := feedback.String(); got != want {
+			t.Errorf("feedback at inspection = %q, want %q", got, want)
+		}
+	}
+	service.beforeCloneKnown = func() {
+		want := "Refreshing repositories...\nRefreshing repositories: done\nInspecting repositories...\nInspecting repositories: done\nCloning selected repositories...\n"
+		if got := feedback.String(); got != want {
+			t.Errorf("feedback at selected clone = %q, want %q", got, want)
+		}
+	}
 	pickerFake := &fakeSetupPicker{many: [][]string{{"team/web", "team/api"}}}
-	var output bytes.Buffer
 
-	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &output, service, pickerFake)
+	err := executeRepo(context.Background(), []string{"pick", "workspace"}, &output, &feedback, service, pickerFake)
 	if !errors.Is(err, cloneErr) {
 		t.Fatalf("executeRepo(pick) error = %v, want clone error", err)
 	}
@@ -167,6 +203,10 @@ func TestExecuteRepoPickMapsExternalKeysAndPrintsIndependentResults(t *testing.T
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("output = %q, want containing %q", output.String(), text)
 		}
+	}
+	wantFeedback := "Refreshing repositories...\nRefreshing repositories: done\nInspecting repositories...\nInspecting repositories: done\nCloning selected repositories...\nCloning selected repositories: failed\n"
+	if got := feedback.String(); got != wantFeedback {
+		t.Errorf("feedback = %q, want %q", got, wantFeedback)
 	}
 }
 
@@ -189,7 +229,7 @@ func TestRepoCommandsValidateBeforeDatabaseOpen(t *testing.T) {
 			databasePath := filepath.Join(t.TempDir(), "devdash.db")
 			t.Setenv("DEVDASH_DB", databasePath)
 			var output bytes.Buffer
-			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			err := run(context.Background(), test.args, strings.NewReader(""), &output, &bytes.Buffer{})
 			if err == nil || err.Error() != test.wantErr {
 				t.Fatalf("run(%v) error = %v, want %q", test.args, err, test.wantErr)
 			}
@@ -243,23 +283,39 @@ type fakeRepoService struct {
 	cloneKnownCalls     int
 	cloneKnownWorkspace string
 	cloneKnownSelectors []string
+	beforeRefresh       func()
+	beforeList          func()
+	beforeClone         func()
+	beforeCloneKnown    func()
 }
 
 func (s *fakeRepoService) Refresh(context.Context, string) (workspace.Workspace, int, error) {
+	if s.beforeRefresh != nil {
+		s.beforeRefresh()
+	}
 	s.refreshCalls++
 	return workspace.Workspace{}, s.refreshCount, s.refreshErr
 }
 func (s *fakeRepoService) List(context.Context, string) (workspace.Workspace, []repositorydomain.Listed, error) {
+	if s.beforeList != nil {
+		s.beforeList()
+	}
 	s.listCalls++
 	return workspace.Workspace{}, append([]repositorydomain.Listed(nil), s.listed...), s.listErr
 }
 func (s *fakeRepoService) Clone(_ context.Context, workspaceIdentifier string, selectors []string, all bool) (workspace.Workspace, []repositorydomain.CloneResult, error) {
+	if s.beforeClone != nil {
+		s.beforeClone()
+	}
 	s.cloneWorkspace = workspaceIdentifier
 	s.cloneSelectors = append([]string(nil), selectors...)
 	s.cloneAll = all
 	return workspace.Workspace{}, append([]repositorydomain.CloneResult(nil), s.cloneResults...), s.cloneErr
 }
 func (s *fakeRepoService) CloneKnown(_ context.Context, workspaceIdentifier string, selectors []string) (workspace.Workspace, []repositorydomain.CloneResult, error) {
+	if s.beforeCloneKnown != nil {
+		s.beforeCloneKnown()
+	}
 	s.cloneKnownCalls++
 	s.cloneKnownWorkspace = workspaceIdentifier
 	s.cloneKnownSelectors = append([]string(nil), selectors...)

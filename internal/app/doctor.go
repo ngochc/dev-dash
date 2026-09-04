@@ -2,20 +2,27 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 
 	"github.com/ngochc/dev-dash/internal/config"
 	"github.com/ngochc/dev-dash/internal/storage/sqlite"
+	"github.com/ngochc/dev-dash/internal/ui/progress"
 )
 
-func runDoctor(ctx context.Context, output io.Writer) error {
+func runDoctor(ctx context.Context, output, feedback io.Writer) error {
 	dbPath, err := config.DatabasePath()
 	if err != nil {
 		return err
 	}
 
-	db, err := sqlite.Open(ctx, dbPath)
+	var db *sql.DB
+	err = progress.Run(feedback, "Checking database and migrations", func() error {
+		var openErr error
+		db, openErr = sqlite.Open(ctx, dbPath)
+		return openErr
+	})
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

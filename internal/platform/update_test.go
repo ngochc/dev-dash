@@ -2,11 +2,14 @@ package platform
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,16 +34,17 @@ func TestUpdateRunsInstallerForResolvedExecutable(t *testing.T) {
 		t.Fatalf("create executable symlink: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet {
-			t.Errorf("request method = %q, want GET", request.Method)
-		}
-		io.WriteString(response, `#!/bin/sh
+	installer := `#!/bin/sh
 printf 'install=%s\n' "$DEVDASH_INSTALL_DIR"
 printf 'version=%s\n' "$DEVDASH_VERSION"
 printf 'unrelated=%s\n' "$DEVDASH_UPDATE_TEST"
 printf 'installer stderr\n' >&2
-`)
+`
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Errorf("request method = %q, want GET", request.Method)
+		}
+		io.WriteString(response, installer)
 	}))
 	defer server.Close()
 
@@ -53,10 +57,19 @@ printf 'installer stderr\n' >&2
 		t.Fatalf("resolve fixture executable: %v", err)
 	}
 	wantOutput := "Updating Devdash...\n" +
+		"  Executable: " + resolvedExecutable + "\n" +
+		"  Install directory: " + filepath.Dir(resolvedExecutable) + "\n" +
+		"  Release: latest\n" +
+		"  Installer: " + server.URL + "\n" +
+		"Downloading installer...\n" +
+		"Downloading installer: done\n" +
+		fmt.Sprintf("Installer downloaded: %d bytes\n", len(installer)) +
+		"Installing latest release...\n" +
 		"install=" + filepath.Dir(resolvedExecutable) + "\n" +
 		"version=latest\n" +
 		"unrelated=preserved\n" +
-		"installer stderr\n"
+		"installer stderr\n" +
+		"Update complete.\n"
 
 	var output bytes.Buffer
 	if err := update(t.Context(), &output, linkedExecutable, server.URL, server.Client()); err != nil {
@@ -87,6 +100,7 @@ func TestUpdateRejectsMissingExecutable(t *testing.T) {
 
 func TestUpdateRejectsHTTPFailure(t *testing.T) {
 	executable := createFixtureExecutable(t)
+	resolvedExecutable := resolveFixtureExecutable(t, executable)
 	marker := filepath.Join(t.TempDir(), "installed")
 	t.Setenv("DEVDASH_UPDATE_MARKER", marker)
 
@@ -96,37 +110,115 @@ func TestUpdateRejectsHTTPFailure(t *testing.T) {
 	if err == nil || err.Error() != "download installer: unexpected HTTP status 503 Service Unavailable" {
 		t.Fatalf("update() error = %v, want HTTP status error", err)
 	}
-	if got := output.String(); got != "Updating Devdash...\n" {
-		t.Errorf("update() output = %q, want progress line", got)
+	wantOutput := "Updating Devdash...\n" +
+		"  Executable: " + resolvedExecutable + "\n" +
+		"  Install directory: " + filepath.Dir(resolvedExecutable) + "\n" +
+		"  Release: latest\n" +
+		"  Installer: " + installerURL + "\n" +
+		"Downloading installer...\n" +
+		"Downloading installer: failed\n"
+	if got := output.String(); got != wantOutput {
+		t.Errorf("update() output = %q, want %q", got, wantOutput)
 	}
 	assertFileMissing(t, marker)
 }
 
 func TestUpdateRejectsOversizedInstaller(t *testing.T) {
 	executable := createFixtureExecutable(t)
+	resolvedExecutable := resolveFixtureExecutable(t, executable)
 	marker := filepath.Join(t.TempDir(), "installed")
 	t.Setenv("DEVDASH_UPDATE_MARKER", marker)
 	installer := "touch \"$DEVDASH_UPDATE_MARKER\"\n" + strings.Repeat("#", int(maxInstallerSize))
 
 	client, installerURL := installerServer(t, http.StatusOK, installer)
-	err := update(t.Context(), &bytes.Buffer{}, executable, installerURL, client)
+	var output bytes.Buffer
+	err := update(t.Context(), &output, executable, installerURL, client)
 	if err == nil || err.Error() != "installer exceeds 1048576 bytes" {
 		t.Fatalf("update() error = %v, want installer size error", err)
+	}
+	wantOutput := "Updating Devdash...\n" +
+		"  Executable: " + resolvedExecutable + "\n" +
+		"  Install directory: " + filepath.Dir(resolvedExecutable) + "\n" +
+		"  Release: latest\n" +
+		"  Installer: " + installerURL + "\n" +
+		"Downloading installer...\n" +
+		"Downloading installer: failed\n"
+	if got := output.String(); got != wantOutput {
+		t.Errorf("update() output = %q, want %q", got, wantOutput)
 	}
 	assertFileMissing(t, marker)
 }
 
 func TestUpdateReturnsInstallerFailure(t *testing.T) {
 	executable := createFixtureExecutable(t)
-	client, installerURL := installerServer(t, http.StatusOK, "printf 'installer failed\\n' >&2\nexit 12\n")
+	resolvedExecutable := resolveFixtureExecutable(t, executable)
+	installer := "printf 'installer failed\\n' >&2\nexit 12\n"
+	client, installerURL := installerServer(t, http.StatusOK, installer)
 
 	var output bytes.Buffer
 	err := update(t.Context(), &output, executable, installerURL, client)
 	if err == nil || err.Error() != "run installer: exit status 12" {
 		t.Fatalf("update() error = %v, want installer exit error", err)
 	}
-	if got := output.String(); got != "Updating Devdash...\ninstaller failed\n" {
-		t.Errorf("update() output = %q, want progress and installer stderr", got)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 12 {
+		t.Fatalf("update() error = %v, want wrapped exit status 12", err)
+	}
+	wantOutput := "Updating Devdash...\n" +
+		"  Executable: " + resolvedExecutable + "\n" +
+		"  Install directory: " + filepath.Dir(resolvedExecutable) + "\n" +
+		"  Release: latest\n" +
+		"  Installer: " + installerURL + "\n" +
+		"Downloading installer...\n" +
+		"Downloading installer: done\n" +
+		fmt.Sprintf("Installer downloaded: %d bytes\n", len(installer)) +
+		"Installing latest release...\n" +
+		"installer failed\n"
+	if got := output.String(); got != wantOutput {
+		t.Errorf("update() output = %q, want %q", got, wantOutput)
+	}
+}
+
+func TestUpdatePreservesDownloadAndContextErrors(t *testing.T) {
+	executable := createFixtureExecutable(t)
+	downloadErr := errors.New("transport failed")
+	cancelledContext, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, test := range []struct {
+		name      string
+		ctx       context.Context
+		cause     error
+		transport roundTripFunc
+	}{
+		{
+			name:  "HTTP transport",
+			ctx:   context.Background(),
+			cause: downloadErr,
+			transport: func(*http.Request) (*http.Response, error) {
+				return nil, downloadErr
+			},
+		},
+		{
+			name:  "cancelled context",
+			ctx:   cancelledContext,
+			cause: context.Canceled,
+			transport: func(request *http.Request) (*http.Response, error) {
+				return nil, request.Context().Err()
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			client := &http.Client{Transport: test.transport}
+			err := update(test.ctx, &output, executable, "https://example.test/install.sh", client)
+			if !errors.Is(err, test.cause) {
+				t.Fatalf("update() error = %v, want wrapped %v", err, test.cause)
+			}
+			if !strings.HasSuffix(output.String(), "Downloading installer...\nDownloading installer: failed\n") {
+				t.Errorf("update() output = %q, want failed download progress", output.String())
+			}
+		})
 	}
 }
 
@@ -139,6 +231,15 @@ func createFixtureExecutable(t *testing.T) string {
 	return executable
 }
 
+func resolveFixtureExecutable(t *testing.T, executable string) string {
+	t.Helper()
+	resolvedExecutable, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		t.Fatalf("resolve fixture executable: %v", err)
+	}
+	return resolvedExecutable
+}
+
 func installerServer(t *testing.T, status int, installer string) (*http.Client, string) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
@@ -147,6 +248,12 @@ func installerServer(t *testing.T, status int, installer string) (*http.Client, 
 	}))
 	t.Cleanup(server.Close)
 	return server.Client(), server.URL
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func assertFileMissing(t *testing.T, path string) {

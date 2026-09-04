@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/ngochc/dev-dash/internal/ui/progress"
 )
 
 const defaultInstallerURL = "https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh"
@@ -41,37 +43,50 @@ func update(
 	installDir := filepath.Dir(resolvedExecutablePath)
 
 	fmt.Fprintln(output, "Updating Devdash...")
+	fmt.Fprintf(output, "  Executable: %s\n", resolvedExecutablePath)
+	fmt.Fprintf(output, "  Install directory: %s\n", installDir)
+	fmt.Fprintln(output, "  Release: latest")
+	fmt.Fprintf(output, "  Installer: %s\n", installerURL)
+	var installer []byte
+	err = progress.Run(output, "Downloading installer", func() error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, installerURL, nil)
+		if err != nil {
+			return fmt.Errorf("create installer request: %w", err)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return fmt.Errorf("download installer: %w", err)
+		}
+		defer response.Body.Close()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, installerURL, nil)
-	if err != nil {
-		return fmt.Errorf("create installer request: %w", err)
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return fmt.Errorf("download installer: %w", err)
-	}
-	defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return fmt.Errorf("download installer: unexpected HTTP status %s", response.Status)
+		}
 
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("download installer: unexpected HTTP status %s", response.Status)
-	}
-
-	installer, err := io.ReadAll(io.LimitReader(response.Body, maxInstallerSize+1))
+		installer, err = io.ReadAll(io.LimitReader(response.Body, maxInstallerSize+1))
+		if err != nil {
+			return fmt.Errorf("read installer: %w", err)
+		}
+		if int64(len(installer)) > maxInstallerSize {
+			return fmt.Errorf("installer exceeds %d bytes", maxInstallerSize)
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("read installer: %w", err)
+		return err
 	}
-	if int64(len(installer)) > maxInstallerSize {
-		return fmt.Errorf("installer exceeds %d bytes", maxInstallerSize)
-	}
+	fmt.Fprintf(output, "Installer downloaded: %d bytes\n", len(installer))
 
 	command := exec.CommandContext(ctx, "/bin/sh")
 	command.Stdin = bytes.NewReader(installer)
 	command.Stdout = output
 	command.Stderr = output
 	command.Env = updateEnvironment(os.Environ(), installDir)
+	fmt.Fprintln(output, "Installing latest release...")
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("run installer: %w", err)
 	}
+	fmt.Fprintln(output, "Update complete.")
 
 	return nil
 }

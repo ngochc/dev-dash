@@ -12,7 +12,7 @@ This page lists every command in `devdash --help`. Command errors and unknown su
 | `devdash --help` | Prints complete usage. |
 | `devdash doctor` | Opens the configured database, applies migrations, and reports database, SQLite, and migration status. |
 | `devdash version` | Prints the application-tracked release version. |
-| `devdash update` | Reinstalls the latest checksum-verified release over the resolved current executable and reports the resolved target, installer source, download and install stages, and completion. |
+| `devdash update` | Reinstalls the latest checksum-verified release over the resolved current executable. |
 
 ## Workspace
 

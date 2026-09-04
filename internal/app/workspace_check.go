@@ -13,6 +13,7 @@ import (
 	"github.com/ngochc/dev-dash/internal/platform"
 	repositorydomain "github.com/ngochc/dev-dash/internal/repository"
 	"github.com/ngochc/dev-dash/internal/storage/sqlite"
+	"github.com/ngochc/dev-dash/internal/ui/progress"
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
@@ -69,7 +70,7 @@ type workspaceCheckReport struct {
 	status          workspaceCheckStatus
 }
 
-func runWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output io.Writer) error {
+func runWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output, feedback io.Writer) error {
 	databasePath, err := config.DatabasePath()
 	if err != nil {
 		return fmt.Errorf("resolve database path: %w", err)
@@ -91,7 +92,7 @@ func runWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output i
 		gitintegration.NewCLIInspector(),
 		platform.DirectoryManager{},
 	)
-	return executeWorkspaceCheck(ctx, workspaceIdentifier, output, workspaceCheckDependencies{
+	return executeWorkspaceCheck(ctx, workspaceIdentifier, output, feedback, workspaceCheckDependencies{
 		workspaces:   workspace.NewService(workspaceRepository),
 		config:       workspace.NewConfigService(workspaceRepository, configRepository),
 		github:       repositoryService,
@@ -100,7 +101,7 @@ func runWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output i
 	})
 }
 
-func executeWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output io.Writer, dependencies workspaceCheckDependencies) error {
+func executeWorkspaceCheck(ctx context.Context, workspaceIdentifier string, output, feedback io.Writer, dependencies workspaceCheckDependencies) error {
 	item, err := dependencies.workspaces.Get(ctx, workspaceIdentifier)
 	if err != nil {
 		return err
@@ -151,7 +152,10 @@ func executeWorkspaceCheck(ctx context.Context, workspaceIdentifier string, outp
 	}
 
 	if !missingOrganization && hostErr == nil {
-		_, _, checkErr := dependencies.github.Check(ctx, item.ID)
+		checkErr := progress.Run(feedback, "Checking GitHub authentication", func() error {
+			_, _, err := dependencies.github.Check(ctx, item.ID)
+			return err
+		})
 		switch {
 		case checkErr == nil:
 			report.cli = "installed"
@@ -170,7 +174,12 @@ func executeWorkspaceCheck(ctx context.Context, workspaceIdentifier string, outp
 		}
 	}
 
-	_, repositories, listErr := dependencies.repositories.List(ctx, item.ID)
+	var repositories []repositorydomain.Listed
+	listErr := progress.Run(feedback, "Inspecting repositories", func() error {
+		var err error
+		_, repositories, err = dependencies.repositories.List(ctx, item.ID)
+		return err
+	})
 	if listErr != nil {
 		report.repositoryError = listErr.Error()
 		degradationErrors = append(degradationErrors, listErr)

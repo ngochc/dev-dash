@@ -14,6 +14,7 @@ import (
 	repositorydomain "github.com/ngochc/dev-dash/internal/repository"
 	"github.com/ngochc/dev-dash/internal/storage/sqlite"
 	"github.com/ngochc/dev-dash/internal/ui/picker"
+	"github.com/ngochc/dev-dash/internal/ui/progress"
 	"github.com/ngochc/dev-dash/internal/workspace"
 )
 
@@ -24,7 +25,7 @@ type repositoryService interface {
 	CloneKnown(context.Context, string, []string) (workspace.Workspace, []repositorydomain.CloneResult, error)
 }
 
-func runRepo(ctx context.Context, args []string, input io.Reader, output io.Writer) error {
+func runRepo(ctx context.Context, args []string, input io.Reader, output, feedback io.Writer) error {
 	if err := validateRepoArgs(args); err != nil {
 		return err
 	}
@@ -46,13 +47,18 @@ func runRepo(ctx context.Context, args []string, input io.Reader, output io.Writ
 		gitintegration.NewCLIInspector(),
 		platform.DirectoryManager{},
 	)
-	return executeRepo(ctx, args, output, service, picker.New(input, output))
+	return executeRepo(ctx, args, output, feedback, service, picker.New(input, feedback))
 }
 
-func executeRepo(ctx context.Context, args []string, output io.Writer, service repositoryService, repositoryPicker picker.Picker) error {
+func executeRepo(ctx context.Context, args []string, output, feedback io.Writer, service repositoryService, repositoryPicker picker.Picker) error {
 	switch args[0] {
 	case "refresh":
-		_, count, err := service.Refresh(ctx, args[1])
+		var count int
+		err := progress.Run(feedback, "Refreshing repositories", func() error {
+			var refreshErr error
+			_, count, refreshErr = service.Refresh(ctx, args[1])
+			return refreshErr
+		})
 		if err != nil {
 			return err
 		}
@@ -60,7 +66,12 @@ func executeRepo(ctx context.Context, args []string, output io.Writer, service r
 		return nil
 
 	case "list":
-		_, items, err := service.List(ctx, args[1])
+		var items []repositorydomain.Listed
+		err := progress.Run(feedback, "Inspecting repositories", func() error {
+			var listErr error
+			_, items, listErr = service.List(ctx, args[1])
+			return listErr
+		})
 		if err != nil {
 			return err
 		}
@@ -88,14 +99,23 @@ func executeRepo(ctx context.Context, args []string, output io.Writer, service r
 		if all {
 			selectors = nil
 		}
-		_, results, cloneErr := service.Clone(ctx, args[1], selectors, all)
+		var results []repositorydomain.CloneResult
+		cloneErr := progress.Run(feedback, "Refreshing and cloning repositories", func() error {
+			var err error
+			_, results, err = service.Clone(ctx, args[1], selectors, all)
+			return err
+		})
 		if err := printCloneResults(output, results); err != nil {
 			return err
 		}
 		return cloneErr
 
 	case "pick":
-		if _, _, err := service.Refresh(ctx, args[1]); err != nil {
+		err := progress.Run(feedback, "Refreshing repositories", func() error {
+			_, _, refreshErr := service.Refresh(ctx, args[1])
+			return refreshErr
+		})
+		if err != nil {
 			if errors.Is(err, githubintegration.ErrIncompleteConfig) {
 				return setupError{
 					message: fmt.Sprintf("GitHub configuration is incomplete for workspace %q.\n\nMissing:\n  github.org\n\nConfigure with:\n  devdash workspace setup %s", args[1], args[1]),
@@ -104,7 +124,12 @@ func executeRepo(ctx context.Context, args []string, output io.Writer, service r
 			}
 			return err
 		}
-		_, items, err := service.List(ctx, args[1])
+		var items []repositorydomain.Listed
+		err = progress.Run(feedback, "Inspecting repositories", func() error {
+			var listErr error
+			_, items, listErr = service.List(ctx, args[1])
+			return listErr
+		})
 		if err != nil {
 			return err
 		}
@@ -116,7 +141,12 @@ func executeRepo(ctx context.Context, args []string, output io.Writer, service r
 		if err != nil {
 			return err
 		}
-		_, results, cloneErr := service.CloneKnown(ctx, args[1], selected)
+		var results []repositorydomain.CloneResult
+		cloneErr := progress.Run(feedback, "Cloning selected repositories", func() error {
+			var err error
+			_, results, err = service.CloneKnown(ctx, args[1], selected)
+			return err
+		})
 		if err := printCloneResults(output, results); err != nil {
 			return err
 		}
