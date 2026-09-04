@@ -24,10 +24,18 @@ Install the latest checksum-verified release. The default destination is `~/.loc
 curl -fsSL https://raw.githubusercontent.com/ngochc/dev-dash/main/install.sh | sh
 ```
 
-Build or run from source:
+Build the current checkout into `bin/devdash`, or build and install it locally. Source builds report version `devel`; `make install` defaults to `~/.local/bin/devdash` and accepts the same `DEVDASH_INSTALL_DIR` override as the release installer.
 
 ```bash
-go build -o bin/devdash ./cmd/devdash
+make build
+./bin/devdash --help
+make install
+DEVDASH_INSTALL_DIR=/custom/bin make install
+```
+
+Run without retaining a binary:
+
+```bash
 go run ./cmd/devdash --help
 ```
 
@@ -82,13 +90,19 @@ See the [CLI Reference](docs/cli.md) for every command and argument form.
 
 ## Development
 
-Use direct Go commands; the current `Makefile` has no usable targets.
+Use the Make targets as one development-to-release progression:
 
 ```bash
-go fmt ./...
-go vet ./...
-go test ./...
-go build -o bin/devdash ./cmd/devdash
+version=v0.2.0
+make build &&
+  make test &&
+  make release VERSION="$version" &&
+  git tag "$version" &&
+  git push origin "$version"
 ```
 
-The full contributor checks, coverage requirement, and release workflow are in [Development](docs/development.md).
+Use `make build` while iterating, `make test` as the shared completion gate, and `make release` as the final local rehearsal. The rehearsal builds and verifies the four platform archives plus `dist/checksums.txt`; it does not create tags, push Git state, or publish a GitHub Release.
+
+Only a pushed `v*` tag publishes. The GitHub workflow rebuilds from that tagged commit, creates the release when absent, or uploads the five generated assets with `--clobber` when the release already exists. Existing release notes, state, and differently named assets are preserved. A clobber upload is not atomic: it removes a same-named asset before uploading its replacement, so rerun a failed publication and verify all five generated assets.
+
+Tagging order, safe retries, and post-publication verification are documented in [Development](docs/development.md).

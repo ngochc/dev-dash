@@ -67,16 +67,18 @@ go version
 
 After installing a Go binary with `go install`, run `asdf reshim golang`.
 
-Use direct Go commands; the current `Makefile` defines no working targets.
+Use Make for the shared build, local-install, test, and release-artifact workflows. Keep direct Go commands for focused checks:
 
 ```bash
-go fmt ./...                 # format source
-go vet ./...                 # standard static checks
-staticcheck ./...            # additional checks; tool is not pinned by this repo
-go test ./...                # run all tests
-go build ./cmd/devdash       # build the CLI
-go run ./cmd/devdash         # run the CLI from source
-go mod tidy                  # update module metadata after dependency changes
+make build                    # build bin/devdash from the current checkout
+make install                  # rebuild and install to DEVDASH_INSTALL_DIR or ~/.local/bin
+make test                     # shell suites, Go tests, and strict coverage gate
+make release VERSION=vX.Y.Z  # create and smoke-test local dist/ assets only
+go fmt ./...                  # format source
+go vet ./...                  # standard static checks
+staticcheck ./...             # additional checks; tool is not pinned by this repo
+go run ./cmd/devdash          # run the CLI from source
+go mod tidy                   # update module metadata after dependency changes
 ```
 
 Do not report validation commands as passing unless they ran successfully.
@@ -110,11 +112,12 @@ Do not report validation commands as passing unless they ran successfully.
 | `internal/storage/sqlite/sqlite.go` | Creates the database directory, configures SQLite, and invokes migrations. |
 | `internal/storage/sqlite/migrate.go` | Runs embedded Goose migrations. |
 | `internal/storage/migrations/embed.go` | Embeds migration SQL into the binary. |
-| `Makefile` | Contains three recursive `make` command lines but no target definitions; do not rely on it. |
+| `Makefile` | Public build, local-install, test, and local release-artifact targets backed by POSIX scripts. |
 | `.gitignore` | Excludes local Devdash/SQLite state, Go build and test artifacts, local workspace files, environment files, and OS metadata. |
 | `install.sh` | Maps supported platforms, verifies release checksums, and installs atomically to a user-owned directory. |
 | `.github/workflows/release.yml` | Enforces tests and coverage, builds release archives, smoke-tests installation, and publishes GitHub Releases. |
 | `test/install_test.sh` | Exercises installer platform selection, version selection, checksum failures, and failure-safe replacement. |
+| `test/tooling_test.sh` | Exercises Make dispatch, local build/install, coverage gating, release packaging, and failure-safe replacement. |
 
 ## Runtime/Tooling Preferences
 
@@ -124,32 +127,28 @@ Do not report validation commands as passing unless they ran successfully.
 - Migrations: `github.com/pressly/goose/v3`, embedded from `internal/storage/migrations/`; runtime must not depend on loose migration files.
 - Database path precedence: `DEVDASH_DB`, then `$HOME/.devdash/devdash.db`. Create `$HOME/.devdash` when needed; do not substitute OS-specific application-data directories.
 - Every SQLite connection must enable `foreign_keys = ON`, `journal_mode = WAL`, and `busy_timeout = 5000`.
-- GitHub Actions release tooling is defined in `.github/workflows/release.yml`. Pushed `v*` tags build `devdash_darwin_amd64.tar.gz`, `devdash_darwin_arm64.tar.gz`, `devdash_linux_amd64.tar.gz`, and `devdash_linux_arm64.tar.gz`, publish one `checksums.txt`, smoke-test the Linux archive, and create the GitHub Release. Do not publish an archive without its checksum entry.
+- GitHub Actions release tooling is defined in `.github/workflows/release.yml`. Pushed `v*` tags build `devdash_darwin_amd64.tar.gz`, `devdash_darwin_arm64.tar.gz`, `devdash_linux_amd64.tar.gz`, and `devdash_linux_arm64.tar.gz`, publish one `checksums.txt`, smoke-test the Linux archive, and create or update the matching GitHub Release without deleting its metadata. Do not publish an archive without its checksum entry.
 
 ## Testing & QA
 
-The repository has package-level tests for CLI dispatch, configuration, platform path handling, workspace behavior, SQLite persistence, and migrations, plus black-box shell tests for the installer. Go tests use the standard `testing` package; the tag-driven release workflow is the configured CI path.
+The repository has package-level tests for CLI dispatch, configuration, platform path handling, workspace behavior, SQLite persistence, and migrations, plus black-box shell tests for the release installer and local tooling. Go tests use the standard `testing` package; the tag-driven release workflow is the configured CI path.
 
 - Add tests beside the package under test using Go's `testing` package unless a concrete need justifies another dependency.
 - Every new behavior and bug fix must include tests that fail without the corresponding implementation or fix.
-- Every installer behavior change must include a corresponding black-box case in `test/install_test.sh`.
+- Every installer or tooling-script behavior change must include a corresponding black-box case in `test/install_test.sh` or `test/tooling_test.sh`.
 - Test observable domain behavior and invariants, not implementation plumbing. Cover alias precedence, workspace/resource membership, directed relations, transactions, migration behavior, and provider-failure isolation as those features are implemented.
 - Use temporary databases/directories for storage tests. Never commit `.db`, WAL, or SHM artifacts as fixtures.
 - Run targeted tests while developing, then before completion run:
 
 ```bash
-sh -n install.sh
-sh -n test/install_test.sh
-sh test/install_test.sh
 go fmt ./...
 go vet ./...
 staticcheck ./...
-go test ./...
-go test ./... -coverprofile=coverage.out
-go tool cover -func=coverage.out
+make test
 go build ./cmd/devdash
+make build
 ```
 
 - Run `go mod tidy` only when imports or dependencies changed, and review its changes.
-- Total project statement coverage must remain above 80%. Verify the `total:` result from `go tool cover -func=coverage.out`; package summaries alone are insufficient.
+- Total project statement coverage must remain above 80%. Verify the `total:` result printed by `make test`; package summaries alone are insufficient.
 - If a required tool is unavailable, report that fact rather than claiming the check passed.
