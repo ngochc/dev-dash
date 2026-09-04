@@ -53,7 +53,7 @@ jobs:
             build_dir="dist/${goos}_${goarch}"
             mkdir -p "$build_dir"
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "-s -w" -o "$build_dir/devdash" ./cmd/devdash
+              go build -trimpath -ldflags "-s -w -X github.com/ngochc/dev-dash/internal/app.version=${GITHUB_REF_NAME}" -o "$build_dir/devdash" ./cmd/devdash
             tar -C "$build_dir" -czf "dist/devdash_${goos}_${goarch}.tar.gz" devdash
           done
           (
@@ -72,6 +72,7 @@ jobs:
             DEVDASH_INSTALL_DIR="$RUNNER_TEMP/devdash-bin" \
             sh install.sh
           "$RUNNER_TEMP/devdash-bin/devdash" --help
+          test "$("$RUNNER_TEMP/devdash-bin/devdash" version)" = "devdash $GITHUB_REF_NAME"
 
       - name: Publish GitHub release
         env:

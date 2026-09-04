@@ -57,6 +57,52 @@ func TestRunTopLevelCommands(t *testing.T) {
 	}
 }
 
+func TestRunVersion(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "devdash.db")
+	t.Setenv("DEVDASH_DB", databasePath)
+
+	tests := []struct {
+		name       string
+		args       []string
+		wantOutput string
+		wantError  string
+	}{
+		{name: "valid", args: []string{"version"}, wantOutput: "devdash devel\n"},
+		{name: "invalid arguments", args: []string{"version", "extra"}, wantError: "usage: devdash version"},
+		{name: "long alias remains unknown", args: []string{"--version"}, wantError: "unknown command: --version"},
+		{name: "short alias remains unknown", args: []string{"-v"}, wantError: "unknown command: -v"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			err := run(context.Background(), test.args, strings.NewReader(""), &output)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("run() error = %v", err)
+				}
+			} else if err == nil || err.Error() != test.wantError {
+				t.Fatalf("run() error = %v, want %q", err, test.wantError)
+			}
+			if got := output.String(); got != test.wantOutput {
+				t.Errorf("run() output = %q, want %q", got, test.wantOutput)
+			}
+		})
+	}
+
+	if _, err := os.Stat(databasePath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("database stat error = %v, want file not to exist", err)
+	}
+}
+
+func TestHelpListsVersionCommand(t *testing.T) {
+	var output bytes.Buffer
+	printHelp(&output)
+	if !strings.Contains(output.String(), "devdash version") {
+		t.Errorf("help output = %q, want containing %q", output.String(), "devdash version")
+	}
+}
+
 func TestHelpListsGuidedWorkspaceCommands(t *testing.T) {
 	var output bytes.Buffer
 	printHelp(&output)

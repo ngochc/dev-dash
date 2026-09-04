@@ -9,6 +9,8 @@ import (
 	"github.com/ngochc/dev-dash/internal/platform"
 )
 
+var version = "devel"
+
 type updateRunner func(context.Context, io.Writer) error
 
 func Run(ctx context.Context, args []string) error {
@@ -28,6 +30,12 @@ func runWithUpdater(ctx context.Context, args []string, input io.Reader, output 
 	switch args[0] {
 	case "doctor":
 		return runDoctor(ctx, output)
+	case "version":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: devdash version")
+		}
+		fmt.Fprintf(output, "devdash %s\n", version)
+		return nil
 	case "update":
 		if len(args) != 1 {
 			return fmt.Errorf("usage: devdash update")
@@ -65,6 +73,7 @@ func printHelp(output io.Writer) {
 	fmt.Fprintln(output, `Usage:
   devdash
   devdash doctor
+  devdash version
   devdash update
   devdash config keys [provider]
   devdash repo refresh <workspace>
