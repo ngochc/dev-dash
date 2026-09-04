@@ -487,7 +487,7 @@ shasum_log=$case_root/shasum.log
 setup_release_fixture "$case_root"
 limited_bin=$case_root/bin
 mkdir -p "$limited_bin"
-for command_name in sh tar curl awk mktemp chmod cp mv mkdir rm dirname cat; do
+for command_name in sh tar gzip curl awk mktemp chmod cp mv mkdir rm dirname cat; do
 	ln -s "$(command -v "$command_name")" "$limited_bin/$command_name"
 done
 cp "$fake_bin/go" "$limited_bin/go"
