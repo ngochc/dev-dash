@@ -42,6 +42,19 @@ assert_contains() {
 	esac
 }
 
+assert_not_contains() {
+	name=$1
+	output_file=$2
+	needle=$3
+	case "$(cat "$output_file")" in
+		*"$needle"*)
+			fail "$name" "$output_file" "expected output not to contain: $needle"
+			;;
+		*)
+			;;
+	esac
+}
+
 assert_unchanged() {
 	name=$1
 	output_file=$2
@@ -67,6 +80,9 @@ set -u
 
 printf 'CGO_ENABLED=%s|GOOS=%s|GOARCH=%s|%s\n' \
 	"${CGO_ENABLED:-}" "${GOOS:-}" "${GOARCH:-}" "$*" >>"${FAKE_GO_LOG:-/dev/null}"
+if [ -n "${PUBLISH_CALL_LOG:-}" ]; then
+	printf 'go:%s\n' "$*" >>"$PUBLISH_CALL_LOG"
+fi
 
 if [ "${1:-}" = test ]; then
 	for argument in "$@"; do
@@ -85,6 +101,11 @@ if [ "${1:-}" = tool ] && [ "${2:-}" = cover ]; then
 	exit 0
 fi
 
+if [ "${1:-}" = run ] && [ "${2:-}" = ./cmd/devdash ] && [ "${3:-}" = version ] && [ "$#" -eq 3 ]; then
+	printf 'devdash %s\n' "${FAKE_APP_VERSION:-v0.1.2}"
+	exit 0
+fi
+
 if [ "${1:-}" != build ]; then
 	exit 1
 fi
@@ -93,7 +114,7 @@ if [ "${FAKE_GO_MODE:-success}" = fail ]; then
 fi
 
 output=
-version=devel
+version=${FAKE_APP_VERSION:-v0.1.2}
 shift
 while [ "$#" -gt 0 ]; do
 	argument=$1
@@ -101,9 +122,6 @@ while [ "$#" -gt 0 ]; do
 		-o)
 			shift
 			output=$1
-			;;
-		*internal/app.version=*)
-			version=${argument##*=}
 			;;
 	esac
 	shift
@@ -130,6 +148,55 @@ EOF_BINARY
 chmod 0755 "$output"
 EOF
 chmod 0755 "$fake_bin/go"
+
+cat >"$fake_bin/git" <<'EOF'
+#!/bin/sh
+set -u
+
+if [ -n "${PUBLISH_CALL_LOG:-}" ]; then
+	printf 'git:%s\n' "$*" >>"$PUBLISH_CALL_LOG"
+fi
+
+case "${1:-}" in
+	check-ref-format)
+		exit "${FAKE_GIT_CHECK_RESULT:-0}"
+		;;
+	rev-list)
+		if [ -z "${FAKE_TAG_COMMIT:-}" ]; then
+			exit 1
+		fi
+		printf '%s\n' "$FAKE_TAG_COMMIT"
+		;;
+	tag | push)
+		exit "${FAKE_GIT_MUTATION_RESULT:-0}"
+		;;
+	*)
+		exit 1
+		;;
+esac
+EOF
+chmod 0755 "$fake_bin/git"
+
+cat >"$fake_bin/gh" <<'EOF'
+#!/bin/sh
+set -u
+
+if [ -n "${PUBLISH_CALL_LOG:-}" ]; then
+	printf 'gh:%s\n' "$*" >>"$PUBLISH_CALL_LOG"
+fi
+
+if [ "${1:-}" = release ] && [ "${2:-}" = view ]; then
+	if [ "${FAKE_RELEASE_EXISTS:-no}" = yes ]; then
+		exit 0
+	fi
+	exit 1
+fi
+if [ "${1:-}" = release ] && { [ "${2:-}" = create ] || [ "${2:-}" = upload ]; }; then
+	exit "${FAKE_GH_RESULT:-0}"
+fi
+exit 1
+EOF
+chmod 0755 "$fake_bin/gh"
 
 cat >"$fake_bin/uname" <<'EOF'
 #!/bin/sh
@@ -158,13 +225,13 @@ done
 if ! CALL_LOG=$calls make -s -C "$fixture" >"$output" 2>&1 ||
 	! CALL_LOG=$calls make -s -C "$fixture" install >>"$output" 2>&1 ||
 	! CALL_LOG=$calls make -s -C "$fixture" test >>"$output" 2>&1 ||
-	! CALL_LOG=$calls make -s -C "$fixture" release VERSION=v1.2.3 >>"$output" 2>&1; then
+	! CALL_LOG=$calls make -s -C "$fixture" release >>"$output" 2>&1; then
 	fail "$name" "$output" "Make target dispatch failed"
 fi
 expected_calls='build.sh:
 install-local.sh:
 test.sh:
-release.sh:v1.2.3'
+release.sh:'
 if [ "$(cat "$calls")" != "$expected_calls" ]; then
 	fail "$name" "$output" "Make dispatched an unexpected script or argument"
 fi
@@ -206,7 +273,7 @@ if ! (cd "$case_root/work" && DEVDASH_INSTALL_DIR=$destination FAKE_GO_LOG=$go_l
 	fail "$name" "$output" "local installer returned nonzero"
 fi
 destination_abs=$(CDPATH= cd "$destination" && pwd -P)
-if [ ! -x "$destination/devdash" ] || [ "$("$destination/devdash" version)" != 'devdash devel' ]; then
+if [ ! -x "$destination/devdash" ] || [ "$("$destination/devdash" version)" != 'devdash v0.1.2' ]; then
 	fail "$name" "$output" "local installer did not install the source build"
 fi
 assert_contains "$name" "$output" "Devdash installed to $destination_abs/devdash"
@@ -225,7 +292,7 @@ if ! (unset DEVDASH_INSTALL_DIR; HOME=$home FAKE_GO_LOG=$go_log PATH=$fake_bin:$
 	/bin/sh "$install_fixture/scripts/install-local.sh" >"$output" 2>&1); then
 	fail "$name" "$output" "local installer returned nonzero"
 fi
-if [ "$("$home/.local/bin/devdash" version)" != 'devdash devel' ]; then
+if [ "$("$home/.local/bin/devdash" version)" != 'devdash v0.1.2' ]; then
 	fail "$name" "$output" "default HOME destination was not used"
 fi
 pass "$name"
@@ -365,24 +432,54 @@ EOF
 	chmod 0755 "$release_fixture/scripts/test.sh"
 }
 
-name=release-argument-validation
+name=release-extra-argument
 case_root=$test_root/$name
 output=$case_root/output
 setup_release_fixture "$case_root"
 mkdir -p "$release_fixture/dist"
 printf original >"$release_fixture/dist/marker"
-if /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
-	fail "$name" "$output" "missing version unexpectedly succeeded"
+if /bin/sh "$release_fixture/scripts/release.sh" unexpected >"$output" 2>&1; then
+	fail "$name" "$output" "extra argument unexpectedly succeeded"
 fi
-assert_contains "$name" "$output" 'usage: scripts/release.sh <v-version>'
-if /bin/sh "$release_fixture/scripts/release.sh" v1 v2 >"$output" 2>&1; then
-	fail "$name" "$output" "extra version unexpectedly succeeded"
+assert_contains "$name" "$output" 'usage: scripts/release.sh'
+assert_unchanged "$name" "$output" "$release_fixture/dist/marker"
+pass "$name"
+
+name=release-version-prefix-validation
+case_root=$test_root/$name
+output=$case_root/output
+go_log=$case_root/go.log
+test_log=$case_root/test.log
+setup_release_fixture "$case_root"
+mkdir -p "$release_fixture/dist"
+printf original >"$release_fixture/dist/marker"
+if FAKE_APP_VERSION=1.2.3 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
+	fail "$name" "$output" "non-v application version unexpectedly succeeded"
 fi
-assert_contains "$name" "$output" 'usage: scripts/release.sh <v-version>'
-if /bin/sh "$release_fixture/scripts/release.sh" 1.2.3 >"$output" 2>&1; then
-	fail "$name" "$output" "non-v version unexpectedly succeeded"
+assert_contains "$name" "$output" 'error: application version must start with v (got devdash 1.2.3)'
+if [ -e "$test_log" ]; then
+	fail "$name" "$output" "test gate ran before version validation"
 fi
-assert_contains "$name" "$output" 'error: release version must start with v'
+assert_unchanged "$name" "$output" "$release_fixture/dist/marker"
+pass "$name"
+
+name=release-tag-ref-validation
+case_root=$test_root/$name
+output=$case_root/output
+go_log=$case_root/go.log
+test_log=$case_root/test.log
+setup_release_fixture "$case_root"
+mkdir -p "$release_fixture/dist"
+printf original >"$release_fixture/dist/marker"
+if FAKE_APP_VERSION='vbad tag' FAKE_GIT_CHECK_RESULT=1 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
+	fail "$name" "$output" "invalid application tag unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'error: application version is not a valid tag: vbad tag'
+if [ -e "$test_log" ]; then
+	fail "$name" "$output" "test gate ran before tag validation"
+fi
 assert_unchanged "$name" "$output" "$release_fixture/dist/marker"
 pass "$name"
 
@@ -394,8 +491,8 @@ test_log=$case_root/test.log
 setup_release_fixture "$case_root"
 mkdir -p "$release_fixture/dist"
 printf original >"$release_fixture/dist/marker"
-if FAKE_UNAME_S=FreeBSD FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
-	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" v1.2.3 >"$output" 2>&1; then
+if FAKE_APP_VERSION=v1.2.3 FAKE_UNAME_S=FreeBSD FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
 	fail "$name" "$output" "unsupported host unexpectedly succeeded"
 fi
 assert_contains "$name" "$output" 'error: unsupported release host: FreeBSD/x86_64'
@@ -413,8 +510,8 @@ test_log=$case_root/test.log
 setup_release_fixture "$case_root"
 mkdir -p "$release_fixture/dist"
 printf original >"$release_fixture/dist/marker"
-if FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
-	FAKE_TEST_RESULT=1 PATH=$fake_bin:$original_path make -s -C "$release_fixture" release VERSION=v1.2.3 >"$output" 2>&1; then
+if FAKE_APP_VERSION=v1.2.3 FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+	FAKE_TEST_RESULT=1 PATH=$fake_bin:$original_path make -s -C "$release_fixture" release >"$output" 2>&1; then
 	fail "$name" "$output" "make release unexpectedly succeeded"
 fi
 if [ "$(cat "$test_log")" != called ]; then
@@ -431,8 +528,8 @@ test_log=$case_root/test.log
 setup_release_fixture "$case_root"
 mkdir -p "$release_fixture/dist"
 printf original >"$release_fixture/dist/marker"
-if ! FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
-	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" v1.2.3 >"$output" 2>&1; then
+if ! FAKE_APP_VERSION=v1.2.3 FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+	PATH=$fake_bin:$original_path /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
 	fail "$name" "$output" "release script returned nonzero"
 fi
 dist=$release_fixture/dist
@@ -468,13 +565,14 @@ if [ "$(awk 'END { print NR }' "$dist/checksums.txt")" -ne 4 ]; then
 	fail "$name" "$output" "checksums.txt does not contain exactly four entries"
 fi
 for target in 'GOOS=darwin|GOARCH=amd64' 'GOOS=darwin|GOARCH=arm64' 'GOOS=linux|GOARCH=amd64' 'GOOS=linux|GOARCH=arm64'; do
-	assert_contains "$name" "$go_log" "CGO_ENABLED=0|$target|build -trimpath -ldflags -s -w -X github.com/ngochc/dev-dash/internal/app.version=v1.2.3"
+	assert_contains "$name" "$go_log" "CGO_ENABLED=0|$target|build -trimpath -ldflags -s -w -o"
 done
+assert_not_contains "$name" "$go_log" 'internal/app.version='
 extract_dir=$case_root/extract
 mkdir -p "$extract_dir"
 tar -xzf "$dist/devdash_linux_amd64.tar.gz" -C "$extract_dir" devdash
 if [ "$("$extract_dir/devdash" version)" != 'devdash v1.2.3' ]; then
-	fail "$name" "$output" "release version was not injected"
+	fail "$name" "$output" "release artifact did not report the tracked version"
 fi
 pass "$name"
 
@@ -487,7 +585,7 @@ shasum_log=$case_root/shasum.log
 setup_release_fixture "$case_root"
 limited_bin=$case_root/bin
 mkdir -p "$limited_bin"
-for command_name in sh tar gzip curl awk mktemp chmod cp mv mkdir rm dirname cat; do
+for command_name in sh git tar gzip curl awk mktemp chmod cp mv mkdir rm dirname cat; do
 	ln -s "$(command -v "$command_name")" "$limited_bin/$command_name"
 done
 cp "$fake_bin/go" "$limited_bin/go"
@@ -511,9 +609,9 @@ else
 	real_sha256sum=
 	real_shasum=$(command -v shasum)
 fi
-if ! FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
+if ! FAKE_APP_VERSION=v2.0.0 FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_TEST_LOG=$test_log \
 	SHASUM_LOG=$shasum_log REAL_SHA256SUM=$real_sha256sum REAL_SHASUM=$real_shasum \
-	PATH=$limited_bin /bin/sh "$release_fixture/scripts/release.sh" v2.0.0 >"$output" 2>&1; then
+	PATH=$limited_bin /bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
 	fail "$name" "$output" "release failed with shasum fallback"
 fi
 if [ ! -s "$shasum_log" ]; then
@@ -529,12 +627,191 @@ test_log=$case_root/test.log
 setup_release_fixture "$case_root"
 mkdir -p "$release_fixture/dist"
 printf original >"$release_fixture/dist/marker"
-if FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_GO_MODE=bad-help \
+if FAKE_APP_VERSION=v1.2.3 FAKE_UNAME_S=Linux FAKE_UNAME_M=x86_64 FAKE_GO_LOG=$go_log FAKE_GO_MODE=bad-help \
 	FAKE_TEST_LOG=$test_log PATH=$fake_bin:$original_path \
-	/bin/sh "$release_fixture/scripts/release.sh" v1.2.3 >"$output" 2>&1; then
+	/bin/sh "$release_fixture/scripts/release.sh" >"$output" 2>&1; then
 	fail "$name" "$output" "release unexpectedly survived smoke failure"
 fi
 assert_unchanged "$name" "$output" "$release_fixture/dist/marker"
+pass "$name"
+
+setup_publish_fixture() {
+	publish_case_root=$1
+	publish_fixture=$publish_case_root/repo
+	mkdir -p "$publish_fixture/scripts"
+	cp "$repo_root/scripts/publish-release.sh" "$publish_fixture/scripts/publish-release.sh"
+	cat >"$publish_fixture/scripts/release.sh" <<'EOF'
+#!/bin/sh
+printf 'release.sh:%s\n' "$*" >>"$PUBLISH_CALL_LOG"
+exit "${FAKE_RELEASE_RESULT:-0}"
+EOF
+	chmod 0755 "$publish_fixture/scripts/release.sh"
+}
+
+assert_calls() {
+	name=$1
+	output_file=$2
+	calls_file=$3
+	expected=$4
+	if [ "$(cat "$calls_file")" != "$expected" ]; then
+		fail "$name" "$output_file" "publication calls were not ordered as expected"
+	fi
+}
+
+publish_assets='dist/devdash_darwin_amd64.tar.gz dist/devdash_darwin_arm64.tar.gz dist/devdash_linux_amd64.tar.gz dist/devdash_linux_arm64.tar.gz dist/checksums.txt'
+
+name=publish-argument-validation
+case_root=$test_root/$name
+output=$case_root/output
+setup_publish_fixture "$case_root"
+if /bin/sh "$publish_fixture/scripts/publish-release.sh" >"$output" 2>&1; then
+	fail "$name" "$output" "missing commit unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'usage: scripts/publish-release.sh <commit>'
+if /bin/sh "$publish_fixture/scripts/publish-release.sh" one two >"$output" 2>&1; then
+	fail "$name" "$output" "extra commit unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'usage: scripts/publish-release.sh <commit>'
+pass "$name"
+
+name=publish-version-prefix-validation
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if FAKE_APP_VERSION=1.2.3 PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "non-v application version unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'error: application version must start with v (got devdash 1.2.3)'
+assert_calls "$name" "$output" "$calls" 'go:run ./cmd/devdash version'
+pass "$name"
+
+name=publish-tag-ref-validation
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if FAKE_APP_VERSION='vbad tag' FAKE_GIT_CHECK_RESULT=1 PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "invalid application tag unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'error: application version is not a valid tag: vbad tag'
+expected_calls='go:run ./cmd/devdash version
+git:check-ref-format refs/tags/vbad tag'
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-new-tag
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if ! FAKE_APP_VERSION=v1.2.3 FAKE_RELEASE_EXISTS=no PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "new release publication failed"
+fi
+expected_calls="go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3
+release.sh:
+git:tag v1.2.3 commit-1
+git:push origin refs/tags/v1.2.3
+gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes"
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-same-commit-missing-release
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if ! FAKE_APP_VERSION=v1.2.3 FAKE_TAG_COMMIT=commit-1 FAKE_RELEASE_EXISTS=no \
+	PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "same-commit release creation failed"
+fi
+expected_calls="go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3
+release.sh:
+gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes"
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-same-commit-existing-release
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if ! FAKE_APP_VERSION=v1.2.3 FAKE_TAG_COMMIT=commit-1 FAKE_RELEASE_EXISTS=yes \
+	PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "same-commit release upload failed"
+fi
+expected_calls="go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3
+release.sh:
+gh:release upload v1.2.3 $publish_assets --clobber"
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-existing-release-from-other-commit
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if ! FAKE_APP_VERSION=v1.2.3 FAKE_TAG_COMMIT=old-commit FAKE_RELEASE_EXISTS=yes \
+	PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "existing release skip failed"
+fi
+assert_contains "$name" "$output" 'Release v1.2.3 already exists from old-commit; nothing to publish.'
+expected_calls='go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3'
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-tag-collision-without-release
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if FAKE_APP_VERSION=v1.2.3 FAKE_TAG_COMMIT=old-commit FAKE_RELEASE_EXISTS=no \
+	PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "tag collision unexpectedly succeeded"
+fi
+assert_contains "$name" "$output" 'error: tag v1.2.3 points to old-commit, not commit-1, and has no release'
+expected_calls='go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3'
+assert_calls "$name" "$output" "$calls" "$expected_calls"
+pass "$name"
+
+name=publish-build-failure-prevents-tag
+case_root=$test_root/$name
+output=$case_root/output
+calls=$case_root/calls
+setup_publish_fixture "$case_root"
+if FAKE_APP_VERSION=v1.2.3 FAKE_RELEASE_EXISTS=no FAKE_RELEASE_RESULT=1 \
+	PUBLISH_CALL_LOG=$calls PATH=$fake_bin:$original_path \
+	/bin/sh "$publish_fixture/scripts/publish-release.sh" commit-1 >"$output" 2>&1; then
+	fail "$name" "$output" "failed artifact build unexpectedly published"
+fi
+expected_calls='go:run ./cmd/devdash version
+git:check-ref-format refs/tags/v1.2.3
+git:rev-list -n 1 refs/tags/v1.2.3
+gh:release view v1.2.3
+release.sh:'
+assert_calls "$name" "$output" "$calls" "$expected_calls"
 pass "$name"
 
 printf 'tooling tests: %d passed\n' "$passed"

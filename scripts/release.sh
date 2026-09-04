@@ -13,25 +13,30 @@ require_command() {
 	fi
 }
 
-if [ "$#" -ne 1 ] || [ -z "$1" ]; then
-	printf 'usage: scripts/release.sh <v-version>\n' >&2
+if [ "$#" -ne 0 ]; then
+	printf 'usage: scripts/release.sh\n' >&2
 	exit 1
 fi
-version=$1
-case "$version" in
-	v*)
-		;;
-	*)
-		error "release version must start with v"
-		;;
-esac
 
 repo_root=$(CDPATH= cd "$(dirname "$0")/.." && pwd -P)
 cd "$repo_root"
 
-for command_name in go tar curl awk mktemp chmod cp mv mkdir rm uname; do
+for command_name in go git tar curl awk mktemp chmod cp mv mkdir rm uname; do
 	require_command "$command_name"
 done
+
+reported_version=$(go run ./cmd/devdash version)
+case "$reported_version" in
+	"devdash v"*)
+		version=${reported_version#devdash }
+		;;
+	*)
+		error "application version must start with v (got $reported_version)"
+		;;
+esac
+if ! git check-ref-format "refs/tags/$version" >/dev/null 2>&1; then
+	error "application version is not a valid tag: $version"
+fi
 
 host_os=$(uname -s)
 host_arch=$(uname -m)
@@ -85,7 +90,7 @@ for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
 	mkdir -p "$build_dir"
 	CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch \
 		go build -trimpath \
-		-ldflags "-s -w -X github.com/ngochc/dev-dash/internal/app.version=$version" \
+		-ldflags "-s -w" \
 		-o "$build_dir/devdash" ./cmd/devdash
 	tar -czf "$staged_dist/devdash_${goos}_${goarch}.tar.gz" -C "$build_dir" devdash
 done

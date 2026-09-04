@@ -67,7 +67,7 @@ func TestRunVersion(t *testing.T) {
 		wantOutput string
 		wantError  string
 	}{
-		{name: "valid", args: []string{"version"}, wantOutput: "devdash devel\n"},
+		{name: "valid", args: []string{"version"}, wantOutput: "devdash " + version + "\n"},
 		{name: "invalid arguments", args: []string{"version", "extra"}, wantError: "usage: devdash version"},
 		{name: "long alias remains unknown", args: []string{"--version"}, wantError: "unknown command: --version"},
 		{name: "short alias remains unknown", args: []string{"-v"}, wantError: "unknown command: -v"},
@@ -92,6 +92,12 @@ func TestRunVersion(t *testing.T) {
 
 	if _, err := os.Stat(databasePath); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("database stat error = %v, want file not to exist", err)
+	}
+}
+
+func TestVersionIsReleaseTag(t *testing.T) {
+	if version == "" || !strings.HasPrefix(version, "v") {
+		t.Fatalf("version = %q, want nonempty release tag beginning with v", version)
 	}
 }
 

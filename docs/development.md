@@ -45,7 +45,7 @@ go vet ./...
 staticcheck ./...
 ```
 
-`make build` writes `bin/devdash` with the source-build version `devel`. `make install` rebuilds first, then atomically installs that binary to `DEVDASH_INSTALL_DIR` or, when the override is unset, `$HOME/.local/bin`. `make test` runs the installer and tooling black-box suites, one coverage-enabled `go test ./...` pass, prints the full coverage report, and requires total statement coverage strictly greater than 80%.
+`make build` writes `bin/devdash` with the application version tracked in `internal/app/version.go`. `make install` rebuilds first, then atomically installs that binary to `DEVDASH_INSTALL_DIR` or, when the override is unset, `$HOME/.local/bin`. `make test` runs the installer and tooling black-box suites, one coverage-enabled `go test ./...` pass, prints the full coverage report, and requires total statement coverage strictly greater than 80%.
 
 `staticcheck` is not pinned by this repository. If it is unavailable, report that fact; do not claim it passed.
 
@@ -82,7 +82,7 @@ make build
 
 ## Development-to-release workflow
 
-Use the same repository entry points from local iteration through publication. Normal branch and pull-request work never publishes a release; publication starts only when a `v*` tag is pushed.
+The application release version has one source: `const version` in `internal/app/version.go`. Normal branch and pull-request work does not publish. A push to `main` publishes only when that file changed.
 
 ### 1. Iterate locally
 
@@ -90,10 +90,10 @@ Run focused Go tests for the packages being changed, then build the source check
 
 ```bash
 make build
-./bin/devdash --help
+./bin/devdash version
 ```
 
-Source builds report version `devel`. Do not use a release version during normal development.
+Source and local builds report the release version tracked in `internal/app/version.go`; no linker override changes it.
 
 ### 2. Run the shared completion gate
 
@@ -105,16 +105,15 @@ make test
 
 This is the same test gate used by release artifact generation. It runs shell syntax checks, installer and tooling black-box suites, the coverage-enabled Go suite, and the total statement coverage requirement.
 
-### 3. Rehearse the release locally
+### 3. Rehearse the tracked release locally
 
-Choose the next version once and reuse it through the remaining steps:
+For a new release, change `const version` in `internal/app/version.go` to the intended nonempty `v`-prefixed Git tag, then run:
 
 ```bash
-version=v0.2.0
-make release VERSION="$version"
+make release
 ```
 
-The version must be nonempty and begin with `v`. `make release` runs the shared test gate, cross-compiles static binaries, injects the candidate version, creates these files, and installs the host archive through the real installer as a smoke test:
+The command reads the version from the application, validates that it is a valid Git tag, runs the shared test gate, cross-compiles static binaries, creates these files, and installs the host archive through the real installer as a smoke test:
 
 ```text
 dist/devdash_darwin_amd64.tar.gz
@@ -126,31 +125,28 @@ dist/checksums.txt
 
 Each archive contains only the root-level `devdash` binary. `checksums.txt` contains one basename-only SHA-256 entry per archive. The command stages its output in a temporary directory and replaces `dist/` only after the tests, builds, checksums, installation, help check, and version check succeed. It never invokes `gh`, creates a tag, pushes Git state, or changes a GitHub Release.
 
-### 4. Publish the tagged commit
+### 4. Merge the version change to main
 
-Finalize and commit all release content before creating the tag. From the exact commit intended for publication:
+Commit the version change and merge or push that commit to `main`. `.github/workflows/release.yml` checks out complete tag history and calls `scripts/publish-release.sh` for the triggering commit. The publisher resolves the version from the application and handles these states:
 
-```bash
-git tag "$version" &&
-  git push origin "$version"
-```
+- If the tag is absent, it builds and verifies all artifacts before creating a lightweight tag at the triggering commit, pushes exactly that tag, and creates the release with generated notes and all five assets.
+- If the tag already points to the triggering commit, it rebuilds as a retry. It creates a missing release or uploads the five generated assets with `--clobber` when the release exists; it does not recreate or repush the tag.
+- If the tag points elsewhere and its GitHub Release exists, it exits successfully without building or mutating remote state. This makes deployment of automation for an already-published tracked version safe.
+- If the tag points elsewhere and no GitHub Release exists, it fails before building or mutating remote state.
 
-Treat a pushed release tag as immutable. If the source needs correction, publish a new version instead of moving the tag. Do not upload the local `dist/` manually: `.github/workflows/release.yml` checks out the tagged commit and runs `scripts/release.sh "$GITHUB_REF_NAME"`, so published artifacts are rebuilt from the immutable tagged source.
-
-The publish step supports both release ordering cases:
-
-- If the release does not exist, `gh release create` verifies the tag, attaches the five generated assets, and generates release notes.
-- If the release already exists, `gh release upload --clobber` uploads the same five generated assets without deleting or recreating the release. Existing notes, draft/prerelease/publication state, and differently named assets remain unchanged. For each same-named asset, the CLI deletes the old asset before uploading its replacement; an interrupted upload can therefore leave that asset missing.
+Release tags are immutable. Never move or delete an existing tag to publish different source; change `internal/app/version.go` to a new version instead.
 
 ### 5. Retry and verify publication
 
-If publication fails after the tag is pushed, rerun the failed GitHub Actions workflow for that tag. The job rebuilds from the same tagged commit and replaces only the five generated asset names, but replacement is not atomic. Rerun any failed upload and verify that all five generated assets exist before treating the release as repaired. Do not rebuild from the current development branch, move the tag, or delete the release to retry.
+If publication fails, rerun the failed workflow for the same `main` commit. A retry after tag creation rebuilds from that commit and repairs only the release or its five generated assets. A clobber upload is not atomic: `gh` removes a same-named asset before uploading its replacement, so rerun an interrupted upload and verify all assets before treating the release as repaired.
 
 Inspect the final release and exercise its checksum-verified installer path:
 
 ```bash
 (
   set -eu
+  reported_version=$(go run ./cmd/devdash version)
+  version=${reported_version#devdash }
   required_assets='checksums.txt
 devdash_darwin_amd64.tar.gz
 devdash_darwin_arm64.tar.gz

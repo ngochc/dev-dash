@@ -10,4 +10,4 @@ test:
 	sh scripts/test.sh
 
 release:
-	sh scripts/release.sh "$(VERSION)"
+	sh scripts/release.sh

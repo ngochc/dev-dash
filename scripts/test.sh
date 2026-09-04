@@ -26,6 +26,7 @@ for script in \
 	scripts/install-local.sh \
 	scripts/test.sh \
 	scripts/release.sh \
+	scripts/publish-release.sh \
 	test/install_test.sh \
 	test/tooling_test.sh
 do

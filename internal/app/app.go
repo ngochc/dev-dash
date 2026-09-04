@@ -9,8 +9,6 @@ import (
 	"github.com/ngochc/dev-dash/internal/platform"
 )
 
-var version = "devel"
-
 type updateRunner func(context.Context, io.Writer) error
 
 func Run(ctx context.Context, args []string) error {
