@@ -50,6 +50,8 @@ else
 	release_exists=false
 fi
 
+release_note="> This release was automatically published by the Release workflow from commit $commit."
+
 create_release() {
 	gh release create "$version" \
 		dist/devdash_darwin_amd64.tar.gz \
@@ -57,7 +59,8 @@ create_release() {
 		dist/devdash_linux_amd64.tar.gz \
 		dist/devdash_linux_arm64.tar.gz \
 		dist/checksums.txt \
-		--verify-tag --generate-notes
+		--verify-tag --generate-notes \
+		--notes "$release_note"
 }
 
 upload_release() {

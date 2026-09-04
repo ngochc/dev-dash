@@ -718,7 +718,7 @@ gh:release view v1.2.3
 release.sh:
 git:tag v1.2.3 commit-1
 git:push origin refs/tags/v1.2.3
-gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes"
+gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes --notes > This release was automatically published by the Release workflow from commit commit-1."
 assert_calls "$name" "$output" "$calls" "$expected_calls"
 pass "$name"
 
@@ -737,7 +737,7 @@ git:check-ref-format refs/tags/v1.2.3
 git:rev-list -n 1 refs/tags/v1.2.3
 gh:release view v1.2.3
 release.sh:
-gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes"
+gh:release create v1.2.3 $publish_assets --verify-tag --generate-notes --notes > This release was automatically published by the Release workflow from commit commit-1."
 assert_calls "$name" "$output" "$calls" "$expected_calls"
 pass "$name"
 
